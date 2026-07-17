@@ -1,0 +1,19 @@
+<Window x:Class="ClaudeTaskBar.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="claude-task-bar" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="False" Topmost="True"
+        ResizeMode="NoResize" WindowStartupLocation="Manual">
+    <Grid x:Name="Root" Background="#26000000" Opacity="0">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+            <StackPanel.RenderTransform>
+                <ScaleTransform x:Name="Pop" ScaleX="0.7" ScaleY="0.7" />
+            </StackPanel.RenderTransform>
+            <Image x:Name="Mascot" Width="240" Height="240" HorizontalAlignment="Center"
+                   RenderOptions.BitmapScalingMode="NearestNeighbor" />
+            <Border Background="#F2C96442" CornerRadius="12" Padding="18,8" HorizontalAlignment="Center" Margin="0,16,0,0">
+                <TextBlock Text="起動したよ！" Foreground="#FFFFFF" FontSize="26" FontWeight="Bold" />
+            </Border>
+        </StackPanel>
+    </Grid>
+</Window>
