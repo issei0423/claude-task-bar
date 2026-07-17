@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\Desktop\\claude-task-bar\\hooks\\notify.ps1\""
+          }
+        ]
+      }
+    ]
+  }
+}

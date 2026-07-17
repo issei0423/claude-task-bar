@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-task-bar mascot</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none}
+  #wrap{position:fixed;right:14px;bottom:10px;cursor:pointer;
+    transform:translateX(210%);transition:transform .95s cubic-bezier(.2,1.12,.32,1)}
+  #wrap.in{transform:translateX(0)}
+  #char{display:block;image-rendering:pixelated;overflow:visible}
+  .bob{animation:bobpx .82s steps(1) infinite alternate}
+  .bob.hop{animation:hoppx .58s steps(1) 4}
+  @keyframes bobpx{from{transform:translateY(0)}to{transform:translateY(-6px)}}
+  @keyframes hoppx{0%{transform:translateY(0)}25%{transform:translateY(-14px)}50%{transform:translateY(-20px)}75%{transform:translateY(-8px)}100%{transform:translateY(0)}}
+  .spark{animation:tw .7s steps(1) infinite alternate}
+  @keyframes tw{from{opacity:.3}to{opacity:1}}
+  #pixshadow{position:absolute;bottom:2px;left:50%;width:56px;height:8px;margin-left:-28px;
+    background:rgba(60,30,20,.22);border-radius:2px;animation:shpx .82s steps(1) infinite alternate}
+  @keyframes shpx{from{width:56px;margin-left:-28px}to{width:48px;margin-left:-24px}}
+  #bubble{position:absolute;bottom:150px;right:2px;background:#faf6ee;border:2px solid #7a3b28;border-radius:12px;
+    padding:8px 12px;box-shadow:0 8px 20px rgba(0,0,0,.18);opacity:0;transform:translateY(10px) scale(.9);
+    transform-origin:bottom right;transition:opacity .35s,transform .35s cubic-bezier(.2,1.25,.3,1);
+    pointer-events:none;white-space:nowrap;text-align:center}
+  #bubble.show{opacity:1;transform:translateY(0) scale(1)}
+  #bubble::after{content:'';position:absolute;right:22px;bottom:-8px;width:12px;height:12px;background:#faf6ee;
+    border-right:2px solid #7a3b28;border-bottom:2px solid #7a3b28;transform:rotate(45deg)}
+  .chip{display:inline-block;font-size:11px;background:#eaddcd;color:#7a3b28;border-radius:999px;padding:1px 9px;margin-bottom:4px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .msg{font-size:14px;font-weight:700;color:#2b2320;font-family:ui-monospace,"Courier New",monospace}
+</style>
+</head>
+<body>
+  <div id="wrap" title="クリックでこのセッションへ">
+    <div id="bubble"><span class="chip" id="chip">Claude</span><div class="msg" id="msg">終わったよー！</div></div>
+    <div id="pixshadow"></div>
+    <div class="bob" id="bob">
+      <svg id="char" viewBox="0 0 23 23" width="140" height="140" xmlns="http://www.w3.org/2000/svg">
+        <g id="base"></g><g id="spark" class="spark"></g><g id="eo"></g><g id="ec" style="display:none"></g>
+      </svg>
+    </div>
+  </div>
+
+<script>
+(function(){
+  var S=23, cx=11, cy=11;
+  function px(x,y,c){return '<rect x="'+x+'" y="'+y+'" width="1.03" height="1.03" fill="'+c+'" shape-rendering="crispEdges"/>';}
+  function k(x,y){return x+','+y;}
+  var occ={}, base='', spark='';
+  for(var y=0;y<S;y++)for(var x=0;x<S;x++){var d=Math.hypot(x-cx,y-cy);if(d<=4.4){var c=d<=1.7?'#e6926a':(d<=3.3?'#c96442':'#a94e33');occ[k(x,y)]=1;base+=px(x,y,c);}}
+  for(var i=0;i<12;i++){var a=i*Math.PI/6,len=(i%2===0)?10.5:8.0;for(var r=3.6;r<=len;r+=0.5){var rx=Math.round(cx+Math.cos(a)*r),ry=Math.round(cy+Math.sin(a)*r);if(occ[k(rx,ry)])continue;occ[k(rx,ry)]=1;if(r>len-1.3){spark+=px(rx,ry,'#f4b25e');}else{base+=px(rx,ry,'#c96442');}}}
+  document.getElementById('base').innerHTML=base;
+  document.getElementById('spark').innerHTML=spark;
+  var ed='#2a1712';
+  document.getElementById('eo').innerHTML=
+    px(8,9,'#fff')+px(9,9,ed)+px(8,10,ed)+px(9,10,ed)+
+    px(13,9,'#fff')+px(14,9,ed)+px(13,10,ed)+px(14,10,ed)+
+    px(10,12,'#6e3320')+px(12,12,'#6e3320')+px(11,13,'#6e3320');
+  document.getElementById('ec').innerHTML=
+    px(8,9,'#c96442')+px(9,9,'#c96442')+px(13,9,'#c96442')+px(14,9,'#c96442')+
+    px(8,10,ed)+px(9,10,ed)+px(13,10,ed)+px(14,10,ed)+
+    px(10,12,'#6e3320')+px(12,12,'#6e3320')+px(11,13,'#6e3320');
+  var eo=document.getElementById('eo'),ec=document.getElementById('ec');
+  setInterval(function(){eo.style.display='none';ec.style.display='';setTimeout(function(){eo.style.display='';ec.style.display='none';},130);},3200);
+
+  var wrap=document.getElementById('wrap'),bubble=document.getElementById('bubble'),bob=document.getElementById('bob');
+  var chip=document.getElementById('chip'),msg=document.getElementById('msg');
+  var shown=false;
+
+  function post(m){ try{ if(window.chrome && window.chrome.webview) window.chrome.webview.postMessage(m); }catch(e){} }
+
+  // Called by the host (WPF) when a Claude session finishes.
+  window.ctbNotify=function(source){
+    chip.textContent = source || 'Claude';
+    msg.textContent = '終わったよー！';
+    shown=true;
+    wrap.classList.remove('in');
+    // reflow then slide in
+    void wrap.offsetWidth;
+    wrap.classList.add('in');
+    setTimeout(function(){ bubble.classList.add('show'); }, 780);
+  };
+
+  function jump(){
+    if(!shown) return;
+    shown=false;
+    msg.textContent='移動！';
+    bob.classList.add('hop');
+    setTimeout(function(){ bob.classList.remove('hop'); }, 560);
+    setTimeout(function(){
+      bubble.classList.remove('show');
+      wrap.classList.remove('in');
+    }, 460);
+    setTimeout(function(){ post('jump'); }, 900);
+  }
+
+  wrap.addEventListener('click', jump);
+})();
+</script>
+</body>
+</html>
