@@ -12,6 +12,7 @@ namespace ClaudeTaskBar;
 public partial class OverlayWindow : Window
 {
     private string _pendingHwnd = "";
+    private string _pendingSource = "";
     private readonly DispatcherTimer _autoHide;
     private const double OffX = 360;
 
@@ -46,11 +47,12 @@ public partial class OverlayWindow : Window
         Hide();
     }
 
-    public void Notify(string source, string hwnd)
+    public void Notify(string source, string hwnd, string type)
     {
         _pendingHwnd = hwnd ?? "";
+        _pendingSource = source ?? "";
         Chip.Text = string.IsNullOrWhiteSpace(source) ? "Claude" : source;
-        Msg.Text = "終わったよー！";
+        Msg.Text = type == "ask" ? "聞きたいことがある！" : "終わったよー！";
         PositionBottomRight();
         Slide.BeginAnimation(TranslateTransform.XProperty, null);
         Slide.X = OffX;
@@ -69,7 +71,7 @@ public partial class OverlayWindow : Window
     private void Jump()
     {
         _autoHide.Stop();
-        WindowFocus.FocusByHandleString(_pendingHwnd);
+        WindowFocus.Focus(_pendingHwnd, _pendingSource);
         SlideOut();
     }
 

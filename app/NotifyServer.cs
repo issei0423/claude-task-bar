@@ -7,18 +7,13 @@ using System.Threading.Tasks;
 
 namespace ClaudeTaskBar;
 
-/// <summary>
-/// Minimal loopback HTTP endpoint built on TcpListener (no http.sys, so it needs
-/// no admin rights or URL ACL). Adapters hit:
-///   GET http://127.0.0.1:8765/done?source=...&hwnd=...
-/// </summary>
 public class NotifyServer
 {
     private readonly TcpListener _listener;
-    private readonly Action<string, string> _onDone;
+    private readonly Action<string, string, string> _onDone;
     private CancellationTokenSource? _cts;
 
-    public NotifyServer(int port, Action<string, string> onDone)
+    public NotifyServer(int port, Action<string, string, string> onDone)
     {
         _onDone = onDone;
         _listener = new TcpListener(IPAddress.Loopback, port);
@@ -54,14 +49,12 @@ public class NotifyServer
                 int n = await stream.ReadAsync(buf, 0, buf.Length);
                 var text = Encoding.UTF8.GetString(buf, 0, n);
 
-                // First line: "GET /done?source=..&hwnd=.. HTTP/1.1"
                 var firstLine = text.Split('\n')[0].Trim();
                 var parts = firstLine.Split(' ');
                 if (parts.Length >= 2)
                 {
-                    var path = parts[1];
-                    var (source, hwnd) = ParseQuery(path);
-                    _onDone(source, hwnd);
+                    var (source, hwnd, type) = ParseQuery(parts[1]);
+                    _onDone(source, hwnd, type);
                 }
 
                 var body = "ok";
@@ -75,14 +68,14 @@ public class NotifyServer
                 await stream.FlushAsync();
             }
         }
-        catch { /* ignore */ }
+        catch { }
     }
 
-    private static (string source, string hwnd) ParseQuery(string path)
+    private static (string source, string hwnd, string type) ParseQuery(string path)
     {
-        string source = "Claude", hwnd = "";
+        string source = "Claude", hwnd = "", type = "done";
         int q = path.IndexOf('?');
-        if (q < 0) return (source, hwnd);
+        if (q < 0) return (source, hwnd, type);
         foreach (var pair in path.Substring(q + 1).Split('&'))
         {
             int eq = pair.IndexOf('=');
@@ -91,8 +84,9 @@ public class NotifyServer
             var val = Uri.UnescapeDataString(pair.Substring(eq + 1));
             if (key == "source" && !string.IsNullOrWhiteSpace(val)) source = val;
             else if (key == "hwnd") hwnd = val;
+            else if (key == "type" && !string.IsNullOrWhiteSpace(val)) type = val;
         }
-        return (source, hwnd);
+        return (source, hwnd, type);
     }
 
     public void Stop()

@@ -16,7 +16,6 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
-        // Prepare the (hidden) overlay so WebView2 initializes up front.
         _overlay = new OverlayWindow();
         _overlay.Show();
         _overlay.Hide();
@@ -29,17 +28,18 @@ public partial class App : System.Windows.Application
         };
 
         var menu = new WForms.ContextMenuStrip();
-        menu.Items.Add("テスト通知", null, (_, __) => ShowDone("test", ""));
+        menu.Items.Add("テスト: 完了", null, (_, __) => ShowDone("test", "", "done"));
+        menu.Items.Add("テスト: 質問", null, (_, __) => ShowDone("test", "", "ask"));
         menu.Items.Add("終了", null, (_, __) => Shutdown());
         _tray.ContextMenuStrip = menu;
-        _tray.DoubleClick += (_, __) => ShowDone("test", "");
+        _tray.DoubleClick += (_, __) => ShowDone("test", "", "done");
 
-        _server = new NotifyServer(8765, (source, hwnd) =>
-            Dispatcher.Invoke(() => ShowDone(source, hwnd)));
+        _server = new NotifyServer(8765, (source, hwnd, type) =>
+            Dispatcher.Invoke(() => ShowDone(source, hwnd, type)));
         _server.Start();
     }
 
-    private void ShowDone(string source, string hwnd) => _overlay?.Notify(source, hwnd);
+    private void ShowDone(string source, string hwnd, string type) => _overlay?.Notify(source, hwnd, type);
 
     private static Icon LoadTrayIcon()
     {
