@@ -1,81 +1,85 @@
 using System;
 using System.IO;
-using System.Text.Json;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using Microsoft.Web.WebView2.Core;
 
 namespace ClaudeTaskBar;
 
 public partial class OverlayWindow : Window
 {
-    private bool _ready;
     private string _pendingHwnd = "";
     private readonly DispatcherTimer _autoHide;
+    private const double OffX = 360;
 
     public OverlayWindow()
     {
         InitializeComponent();
         _autoHide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(12) };
-        _autoHide.Tick += (_, __) => { _autoHide.Stop(); HideOverlay(); };
+        _autoHide.Tick += (_, __) => { _autoHide.Stop(); SlideOut(); };
         Loaded += OnLoaded;
+        Mascot.MouseLeftButtonDown += (_, __) => Jump();
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        PositionBottomRight();
         try
         {
-            Web.DefaultBackgroundColor = System.Drawing.Color.Transparent;
-            await Web.EnsureCoreWebView2Async();
-            Web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
-            Web.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            Web.CoreWebView2.WebMessageReceived += OnWebMessage;
-            var html = Path.Combine(AppContext.BaseDirectory, "assets", "mascot.html");
-            Web.CoreWebView2.Navigate(new Uri(html).AbsoluteUri);
-            _ready = true;
+            var img = Path.Combine(AppContext.BaseDirectory, "assets", "mascot.png");
+            if (File.Exists(img))
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(img);
+                bmp.EndInit();
+                Mascot.Source = bmp;
+            }
         }
-        catch { /* WebView2 runtime missing -> see RUN.md */ }
+        catch { }
+        PositionBottomRight();
+        Slide.BeginAnimation(TranslateTransform.XProperty, null);
+        Slide.X = OffX;
         Hide();
     }
 
     public void Notify(string source, string hwnd)
     {
         _pendingHwnd = hwnd ?? "";
+        Chip.Text = string.IsNullOrWhiteSpace(source) ? "Claude" : source;
+        Msg.Text = "終わったよー！";
         PositionBottomRight();
+        Slide.BeginAnimation(TranslateTransform.XProperty, null);
+        Slide.X = OffX;
         Show();
         Topmost = true;
         Activate();
-        if (_ready && Web.CoreWebView2 != null)
-        {
-            var js = $"window.ctbNotify && window.ctbNotify({JsonSerializer.Serialize(source)});";
-            Web.CoreWebView2.ExecuteScriptAsync(js);
-        }
+
+        var a = new DoubleAnimation(OffX, 0, TimeSpan.FromSeconds(0.55))
+        { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        Slide.BeginAnimation(TranslateTransform.XProperty, a);
+
         _autoHide.Stop();
         _autoHide.Start();
     }
 
-    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private void Jump()
     {
-        string msg;
-        try { msg = e.TryGetWebMessageAsString(); }
-        catch { msg = e.WebMessageAsJson.Trim('"'); }
-
-        if (msg == "jump")
-        {
-            _autoHide.Stop();
-            WindowFocus.FocusByHandleString(_pendingHwnd);
-            HideOverlay();
-        }
-        else if (msg == "hide")
-        {
-            _autoHide.Stop();
-            HideOverlay();
-        }
+        _autoHide.Stop();
+        WindowFocus.FocusByHandleString(_pendingHwnd);
+        SlideOut();
     }
 
-    private void HideOverlay() => Hide();
+    private void SlideOut()
+    {
+        var a = new DoubleAnimation(Slide.X, OffX, TimeSpan.FromSeconds(0.4))
+        { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
+        a.Completed += (_, __) => Hide();
+        Slide.BeginAnimation(TranslateTransform.XProperty, a);
+    }
 
     private void PositionBottomRight()
     {
