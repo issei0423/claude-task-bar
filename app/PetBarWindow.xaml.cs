@@ -6,6 +6,13 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+// UseWindowsForms brings System.Drawing / System.Windows.Forms in via implicit
+// usings; pin the WPF types this file uses so the names are not ambiguous.
+using Color = System.Windows.Media.Color;
+using Cursors = System.Windows.Input.Cursors;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Image = System.Windows.Controls.Image;
+using Orientation = System.Windows.Controls.Orientation;
 
 namespace ClaudeTaskBar;
 
