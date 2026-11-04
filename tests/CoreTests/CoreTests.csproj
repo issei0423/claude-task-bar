@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plain-console checks for the WPF-free core of claude-task-bar
+    (session ledger, pet selection, event parsing, config).
+    No test-framework packages, so `dotnet run` works offline.
+    The app itself targets net10.0-windows; the core files only use
+    long-stable APIs and compile here against net8.0 for verification.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>CoreTests</AssemblyName>
+    <RootNamespace>ClaudeTaskBar.CoreTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\app\NotifyEvent.cs" Link="NotifyEvent.cs" />
+    <Compile Include="..\..\app\Sessions.cs" Link="Sessions.cs" />
+    <Compile Include="..\..\app\AppConfig.cs" Link="AppConfig.cs" />
+    <Compile Include="..\..\app\NotifyServer.cs" Link="NotifyServer.cs" />
+  </ItemGroup>
+
+</Project>

@@ -10,7 +10,7 @@ if (Test-Path $settingsPath) {
   try {
     $json = Get-Content $settingsPath -Raw | ConvertFrom-Json
     if ($json.hooks) {
-      foreach ($evt in @('Stop','Notification')) {
+      foreach ($evt in @('Stop','Notification','SessionStart','UserPromptSubmit','SessionEnd')) {
         if ($json.hooks.PSObject.Properties.Name -contains $evt) {
           $kept = @()
           foreach ($grp in @($json.hooks.$evt)) {
