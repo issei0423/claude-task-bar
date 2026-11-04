@@ -9,11 +9,14 @@ namespace ClaudeTaskBar;
 /// Missing or broken files fall back to defaults instead of crashing,
 /// but values are no longer hardcoded across the app and the hook:
 /// notify.ps1 reads the same file for the port.
-/// Example: { "port": 8765 }
+/// Example: { "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe" }
 /// </summary>
 public sealed class AppConfig
 {
     public int Port { get; init; } = 8765;
+
+    /// <summary>Optional full path to orca.exe; empty means "look in the usual places".</summary>
+    public string OrcaPath { get; init; } = "";
 
     public static string DefaultPath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -36,7 +39,14 @@ public sealed class AppConfig
             {
                 port = v;
             }
-            return new AppConfig { Port = port };
+            string orcaPath = "";
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("orcaPath", out var o) &&
+                o.ValueKind == JsonValueKind.String)
+            {
+                orcaPath = o.GetString() ?? "";
+            }
+            return new AppConfig { Port = port, OrcaPath = orcaPath };
         }
         catch
         {

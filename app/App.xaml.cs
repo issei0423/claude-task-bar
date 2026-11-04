@@ -12,10 +12,10 @@ public partial class App : System.Windows.Application
 {
     private static Mutex? _mutex;
     private WForms.NotifyIcon? _tray;
-    private OverlayWindow? _overlay;
     private PetBarWindow? _petBar;
     private NotifyServer? _server;
     private readonly SessionRegistry _registry = new();
+    private AppConfig _config = new(); // read once at startup
     private int _testSeq;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -25,10 +25,6 @@ public partial class App : System.Windows.Application
         _mutex = new Mutex(true, "ClaudeTaskBar_SingleInstance_v1", out bool created);
         if (!created) { Shutdown(); return; }
 
-        _overlay = new OverlayWindow();
-        _overlay.Show();
-        _overlay.Hide();
-
         _petBar = new PetBarWindow(_registry, JumpToSession);
         _registry.Changed += () => Dispatcher.BeginInvoke(new Action(() => _petBar?.Refresh()));
 
@@ -36,8 +32,8 @@ public partial class App : System.Windows.Application
         _tray.ContextMenuStrip = BuildTrayMenu();
         _tray.DoubleClick += (_, __) => AddTestSession();
 
-        var config = AppConfig.Load();
-        _server = new NotifyServer(config.Port, ev =>
+        _config = AppConfig.Load();
+        _server = new NotifyServer(_config.Port, ev =>
             Dispatcher.BeginInvoke(new Action(() => HandleEvent(ev))));
         try { _server.Start(); }
         catch (Exception ex)
@@ -46,7 +42,7 @@ public partial class App : System.Windows.Application
             // invisible failures were a core complaint.
             System.Diagnostics.Debug.WriteLine("NotifyServer start failed: " + ex.Message);
             _tray.ShowBalloonTip(5000, "claude-task-bar",
-                "受信ポート " + config.Port + " を開けませんでした。別のアプリが使っているかもしれません。",
+                "受信ポート " + _config.Port + " を開けませんでした。別のアプリが使っているかもしれません。",
                 WForms.ToolTipIcon.Warning);
         }
 
@@ -95,27 +91,36 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>
-    /// One event in, two views out: the ledger (source of truth) always
-    /// updates; the pet bar refreshes from it; the old slide-in overlay is
-    /// kept for now as the momentary celebration for done/ask only.
+    /// Update the ledger (the source of truth); the pet bar redraws from it
+    /// via <see cref="SessionRegistry.Changed"/>.
     /// </summary>
     private void HandleEvent(NotifyEvent ev)
     {
         _registry.Apply(ev, DateTimeOffset.Now);
-        if (ev.Kind == NotifyEventKind.Done || ev.Kind == NotifyEventKind.Ask)
-        {
-            _overlay?.Notify(
-                string.IsNullOrWhiteSpace(ev.Source) ? "Claude" : ev.Source,
-                ev.Hwnd,
-                ev.Kind == NotifyEventKind.Ask ? "ask" : "done",
-                ev.Surface);
-        }
     }
 
     private void JumpToSession(SessionInfo s)
     {
+        // Window first, so a failed tab switch still lands the user in the right app.
         WindowFocus.Focus(s.Hwnd, s.Source);
-        _registry.Acknowledge(s.Id);
+
+        // Inside Orca, also switch to the session's own terminal tab. Off the
+        // UI thread: the CLI may take up to OrcaJump.SwitchTimeout.
+        var handle = s.OrcaTerminal;
+        if (!string.IsNullOrEmpty(handle))
+        {
+            var orcaPath = _config.OrcaPath;
+            _ = Task.Run(async () =>
+            {
+                try { await OrcaJump.TrySwitchAsync(orcaPath, handle); }
+                catch (Exception ex) { OrcaJump.Log("Orca switch failed: " + ex.GetType().Name + ": " + ex.Message); }
+            });
+        }
+
+        // Then the pet leaves the bar, whatever its status and whether the
+        // tab switch works (owner, 2026-11-04). Everything the switch needs
+        // was copied into locals above. The session's next event brings it back.
+        _registry.Dismiss(s.Id);
     }
 
     private static void ShowSplash()
