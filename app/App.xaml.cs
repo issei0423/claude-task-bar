@@ -12,7 +12,6 @@ public partial class App : System.Windows.Application
 {
     private static Mutex? _mutex;
     private WForms.NotifyIcon? _tray;
-    private OverlayWindow? _overlay;
     private PetBarWindow? _petBar;
     private NotifyServer? _server;
     private readonly SessionRegistry _registry = new();
@@ -25,10 +24,6 @@ public partial class App : System.Windows.Application
 
         _mutex = new Mutex(true, "ClaudeTaskBar_SingleInstance_v1", out bool created);
         if (!created) { Shutdown(); return; }
-
-        _overlay = new OverlayWindow();
-        _overlay.Show();
-        _overlay.Hide();
 
         _petBar = new PetBarWindow(_registry, JumpToSession);
         _registry.Changed += () => Dispatcher.BeginInvoke(new Action(() => _petBar?.Refresh()));
@@ -96,21 +91,12 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>
-    /// One event in, two views out: the ledger (source of truth) always
-    /// updates; the pet bar refreshes from it; the old slide-in overlay is
-    /// kept for now as the momentary celebration for done/ask only.
+    /// Update the ledger (the source of truth); the pet bar redraws from it
+    /// via <see cref="SessionRegistry.Changed"/>.
     /// </summary>
     private void HandleEvent(NotifyEvent ev)
     {
         _registry.Apply(ev, DateTimeOffset.Now);
-        if (ev.Kind == NotifyEventKind.Done || ev.Kind == NotifyEventKind.Ask)
-        {
-            _overlay?.Notify(
-                string.IsNullOrWhiteSpace(ev.Source) ? "Claude" : ev.Source,
-                ev.Hwnd,
-                ev.Kind == NotifyEventKind.Ask ? "ask" : "done",
-                ev.Surface);
-        }
     }
 
     private void JumpToSession(SessionInfo s)

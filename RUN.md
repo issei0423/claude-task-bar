@@ -32,7 +32,8 @@ dotnet run -c Release
 powershell -Command "Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body '{\"session_id\":\"manual-1\",\"type\":\"done\",\"source\":\"IDE\",\"surface\":\"ide\"}' 'http://127.0.0.1:8765/event'"
 ```
 
-→ ペットバーにペットが出て、完了の吹き出しとオーバーレイが出れば受信OK。
+→ ペットバーにペットが出て、完了の吹き出しが出れば受信OK。
+（画面の端から大きいマスコットが滑り出る旧通知は 2026-11-04 にやめた。知らせるのはペットバーだけ）
 旧形式の `GET /done?source=..&hwnd=..&type=..` も互換のため動き続ける。
 
 ## 3. Claude Code のフックを設定
@@ -64,7 +65,7 @@ Claude Code の各フック
        Orca の中のそのタブに切り替える（上限5秒。失敗しても窓は出たまま、
        理由は %TEMP%\ctb.log に1行）
      ペットの × -> ペットだけ消す（ジャンプしない）
-  -> 完了/質問待ちの瞬間は従来の OverlayWindow もスライドインする（移行期間中）
+  （旧 OverlayWindow のスライドイン通知は呼ばない。完了・質問待ちもペットバーで知らせる）
 ```
 
 ## 設定
@@ -106,4 +107,4 @@ dotnet run
 
 1. web / Claude in Chrome 用のブラウザ拡張アダプタ（DOM監視 → 同じ /event を叩く）
 2. Claude Desktop 用 UserNotificationListener アダプタ
-3. タブ単位のフォーカス、設定UI、OverlayWindow の段階的な置き換え完了
+3. Orca 以外のタブ単位のフォーカス、設定UI
