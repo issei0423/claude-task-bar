@@ -28,6 +28,8 @@ public sealed class NotifyEvent
     public string ProjectPath { get; init; } = "";
     public string Hwnd { get; init; } = "";
     public string Surface { get; init; } = "";
+    /// <summary>Orca terminal tab handle (ORCA_TERMINAL_HANDLE); empty unless it has the documented shape.</summary>
+    public string OrcaTerminal { get; init; } = "";
 
     public string EffectiveId =>
         !string.IsNullOrWhiteSpace(SessionId) ? SessionId :
@@ -73,6 +75,7 @@ public sealed class NotifyEvent
             var path = Get("cwd", "projectPath", "project_path");
             var source = Get("source");
             if (string.IsNullOrWhiteSpace(source)) source = LeafName(path);
+            var orcaTerminal = Get("orca_terminal");
             return new NotifyEvent
             {
                 Kind = kind,
@@ -81,6 +84,7 @@ public sealed class NotifyEvent
                 ProjectPath = path,
                 Hwnd = Get("hwnd"),
                 Surface = Get("surface"),
+                OrcaTerminal = OrcaJump.IsValidHandle(orcaTerminal) ? orcaTerminal : "",
             };
         }
         catch
@@ -92,7 +96,7 @@ public sealed class NotifyEvent
     /// <summary>Parse the legacy GET /done?source=..&amp;hwnd=.. route.</summary>
     public static NotifyEvent FromQuery(string path)
     {
-        string source = "Claude", hwnd = "", type = "done", surface = "", sessionId = "", cwd = "";
+        string source = "Claude", hwnd = "", type = "done", surface = "", sessionId = "", cwd = "", orcaTerminal = "";
         int q = path.IndexOf('?');
         if (q >= 0)
         {
@@ -108,6 +112,7 @@ public sealed class NotifyEvent
                 else if (key == "surface") surface = val;
                 else if (key == "session_id") sessionId = val;
                 else if (key == "cwd") cwd = val;
+                else if (key == "orca_terminal") orcaTerminal = val;
             }
         }
         if (string.IsNullOrWhiteSpace(source) || source == "Claude")
@@ -123,6 +128,7 @@ public sealed class NotifyEvent
             ProjectPath = cwd,
             Hwnd = hwnd,
             Surface = surface,
+            OrcaTerminal = OrcaJump.IsValidHandle(orcaTerminal) ? orcaTerminal : "",
         };
     }
 

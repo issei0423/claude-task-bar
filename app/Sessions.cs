@@ -21,6 +21,8 @@ public sealed class SessionInfo
     public string ProjectPath { get; internal set; } = "";
     public string Surface { get; internal set; } = "";
     public string Hwnd { get; internal set; } = "";
+    /// <summary>Orca terminal tab handle; empty when the session is not in Orca.</summary>
+    public string OrcaTerminal { get; internal set; } = "";
     public SessionStatus Status { get; internal set; } = SessionStatus.Running;
     public DateTimeOffset StartedAt { get; internal set; }
     public DateTimeOffset LastEventAt { get; internal set; }
@@ -76,6 +78,7 @@ public sealed class SessionRegistry
                 if (!string.IsNullOrWhiteSpace(e.ProjectPath)) s.ProjectPath = e.ProjectPath;
                 if (!string.IsNullOrWhiteSpace(e.Surface)) s.Surface = e.Surface;
                 if (!string.IsNullOrWhiteSpace(e.Hwnd)) s.Hwnd = e.Hwnd;
+                if (!string.IsNullOrWhiteSpace(e.OrcaTerminal)) s.OrcaTerminal = e.OrcaTerminal;
                 s.Status = e.Kind switch
                 {
                     NotifyEventKind.Done => SessionStatus.DoneUnseen,

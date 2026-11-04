@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -31,6 +32,12 @@ public static class Program
         LegacyQueryParsing();
         ConfigLoading();
         RequestParsing();
+        OrcaHandleShape();
+        OrcaEventParsing();
+        OrcaLedger();
+        OrcaCliResolve();
+        OrcaStartInfo();
+        await OrcaRun();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -162,6 +169,15 @@ public static class Program
             Check(AppConfig.Load(path).Port == 8765, "out-of-range port falls back to default");
             File.WriteAllText(path, "broken");
             Check(AppConfig.Load(path).Port == 8765, "broken config falls back to default");
+            Check(AppConfig.Load(path).OrcaPath == "", "broken config -> empty orcaPath");
+
+            File.WriteAllText(path, "{\"port\": 9999, \"orcaPath\": \"D:\\\\Tools\\\\orca\\\\orca.exe\"}");
+            var withOrca = AppConfig.Load(path);
+            Check(withOrca.Port == 9999 && withOrca.OrcaPath == @"D:\Tools\orca\orca.exe", "config orcaPath is read");
+            File.WriteAllText(path, "{\"port\": 9999}");
+            Check(AppConfig.Load(path).OrcaPath == "", "missing orcaPath -> empty");
+            File.WriteAllText(path, "{\"orcaPath\": 5}");
+            Check(AppConfig.Load(path).OrcaPath == "", "non-string orcaPath -> empty");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
@@ -182,6 +198,144 @@ public static class Program
         Check(NotifyServer.ParseRequest("garbage") == null, "garbage request parses to null");
     }
 
+    // The shape Orca actually hands out (seen in ORCA_TERMINAL_HANDLE on this PC).
+    private const string OrcaHandle = "term_5a8219cf-2f01-4945-8087-028420cf3c73";
+
+    private static void OrcaHandleShape()
+    {
+        Check(OrcaJump.IsValidHandle(OrcaHandle), "orca handle: real Orca handle passes");
+        Check(OrcaJump.IsValidHandle("term_abc123"), "orca handle: short handle passes");
+        Check(OrcaJump.IsValidHandle("term_" + new string('a', 128)), "orca handle: 128-char body passes");
+
+        Check(!OrcaJump.IsValidHandle(""), "orca handle: empty is rejected");
+        Check(!OrcaJump.IsValidHandle(null), "orca handle: null is rejected");
+        Check(!OrcaJump.IsValidHandle("term_"), "orca handle: bare prefix is rejected");
+        Check(!OrcaJump.IsValidHandle("term_ab c"), "orca handle: space is rejected");
+        Check(!OrcaJump.IsValidHandle("term_ab;calc"), "orca handle: ';' is rejected");
+        Check(!OrcaJump.IsValidHandle("term_ab\"x"), "orca handle: '\"' is rejected");
+        Check(!OrcaJump.IsValidHandle("term_ab&x"), "orca handle: '&' is rejected");
+        Check(!OrcaJump.IsValidHandle("term_" + new string('a', 129)), "orca handle: 129-char body is rejected");
+        Check(!OrcaJump.IsValidHandle("term_abc\n"), "orca handle: trailing newline is rejected");
+        Check(!OrcaJump.IsValidHandle("TERM_abc"), "orca handle: prefix is case-sensitive");
+        Check(!OrcaJump.IsValidHandle("--json"), "orca handle: an option-looking value is rejected");
+    }
+
+    private static void OrcaEventParsing()
+    {
+        var ok = NotifyEvent.FromJson(
+            "{\"session_id\":\"o1\",\"type\":\"done\",\"orca_terminal\":\"" + OrcaHandle + "\"}");
+        Check(ok.OrcaTerminal == OrcaHandle, "POST: valid orca_terminal is kept");
+
+        var bad = NotifyEvent.FromJson("{\"session_id\":\"o1\",\"type\":\"done\",\"orca_terminal\":\"term_x;calc\"}");
+        Check(bad.OrcaTerminal == "" && bad.SessionId == "o1" && bad.Kind == NotifyEventKind.Done,
+            "POST: malformed orca_terminal is dropped, the rest of the event is kept");
+        Check(NotifyEvent.FromJson("{\"session_id\":\"o1\",\"type\":\"done\",\"orca_terminal\":123}").OrcaTerminal == "",
+            "POST: non-string orca_terminal is dropped");
+        Check(NotifyEvent.FromJson("{\"session_id\":\"o1\",\"type\":\"done\"}").OrcaTerminal == "",
+            "POST: missing orca_terminal is empty");
+
+        var get = NotifyEvent.FromQuery("/done?session_id=o2&type=done&orca_terminal=" + Uri.EscapeDataString(OrcaHandle));
+        Check(get.OrcaTerminal == OrcaHandle, "GET: valid orca_terminal is kept");
+        var getBad = NotifyEvent.FromQuery("/done?session_id=o2&type=done&orca_terminal=" + Uri.EscapeDataString("term_a\" & calc"));
+        Check(getBad.OrcaTerminal == "" && getBad.SessionId == "o2", "GET: malformed orca_terminal is dropped");
+        Check(NotifyEvent.FromQuery("/done?session_id=o2&type=done&orca_terminal=").OrcaTerminal == "",
+            "GET: empty orca_terminal stays empty");
+    }
+
+    private static void OrcaLedger()
+    {
+        var r = new SessionRegistry();
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Started, SessionId = "o", OrcaTerminal = "term_first" }, T0);
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "o" }, T0.AddMinutes(1));
+        Check(r.Snapshot()[0].OrcaTerminal == "term_first",
+            "ledger: an event without orca_terminal keeps the earlier handle");
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Done, SessionId = "o", OrcaTerminal = "term_second" }, T0.AddMinutes(2));
+        Check(r.Snapshot()[0].OrcaTerminal == "term_second", "ledger: a new handle overwrites the old one");
+        Check(r.Count == 1, "ledger: handle changes do not duplicate the pet");
+    }
+
+    private static void OrcaCliResolve()
+    {
+        const string localAppData = @"C:\Users\u\AppData\Local";
+        const string def = @"C:\Users\u\AppData\Local\Programs\orca\resources\bin\orca.exe";
+        const string configured = @"D:\Tools\orca\orca.exe";
+        const string onPath = @"E:\bin\orca.exe";
+        const string pathEnv = @"C:\Windows;E:\bin";
+        Func<string, bool> Only(params string[] files) =>
+            p => Array.Exists(files, f => string.Equals(f, p, StringComparison.OrdinalIgnoreCase));
+
+        Check(OrcaJump.ResolveCli(configured, Only(configured, def, onPath), localAppData, pathEnv) == configured,
+            "cli: config orcaPath comes first");
+        Check(OrcaJump.ResolveCli(@"D:\Tools\orca\orca.cmd", Only(@"D:\Tools\orca\orca.cmd", def), localAppData, pathEnv) == def,
+            "cli: config orcaPath not ending in .exe is skipped");
+        Check(OrcaJump.ResolveCli("orca.exe", Only("orca.exe", def), localAppData, pathEnv) == def,
+            "cli: relative config orcaPath is skipped");
+        Check(OrcaJump.ResolveCli(configured, Only(def, onPath), localAppData, pathEnv) == def,
+            "cli: missing config file falls back to the default install");
+        Check(OrcaJump.ResolveCli("", Only(def, onPath), localAppData, pathEnv) == def,
+            "cli: default install comes before PATH");
+        Check(OrcaJump.ResolveCli(null, Only(onPath), localAppData, pathEnv) == onPath,
+            "cli: orca.exe on PATH is used last");
+        Check(OrcaJump.ResolveCli(null, Only(onPath), localAppData, "\"E:\\bin\";;") == onPath,
+            "cli: quoted and empty PATH entries are handled");
+        Check(OrcaJump.ResolveCli(null, Only(@"E:\bin\orca.cmd"), localAppData, pathEnv) == null,
+            "cli: only orca.cmd on PATH -> null (cmd shims are never used)");
+        Check(OrcaJump.ResolveCli(null, Only(), localAppData, null) == null, "cli: nothing found -> null");
+    }
+
+    private static void OrcaStartInfo()
+    {
+        var psi = OrcaJump.BuildStartInfo(@"C:\x\orca.exe", OrcaHandle);
+        Check(psi != null && psi.FileName == @"C:\x\orca.exe", "start info: runs the resolved orca.exe");
+        var args = psi == null ? new List<string>() : new List<string>(psi.ArgumentList);
+        Check(string.Join("|", args) == "terminal|switch|--terminal|" + OrcaHandle + "|--json",
+            "start info: arguments are terminal switch --terminal <handle> --json");
+        Check(psi != null && !psi.UseShellExecute && psi.CreateNoWindow,
+            "start info: no shell, no window");
+        Check(psi != null && psi.Arguments == "", "start info: no spliced argument string");
+        Check(OrcaJump.BuildStartInfo(@"C:\x\orca.exe", "term_a b") == null, "start info: malformed handle -> null");
+        Check(OrcaJump.BuildStartInfo("", OrcaHandle) == null, "start info: empty cli -> null");
+    }
+
+    private static async Task OrcaRun()
+    {
+        // The process runner, exercised with cmd.exe (never the real orca.exe,
+        // which would switch the owner's tabs while the tests run).
+        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        if (!File.Exists(cmd)) { Console.WriteLine("SKIP process runner (no cmd.exe)"); return; }
+        ProcessStartInfo Cmd(string line)
+        {
+            var p = new ProcessStartInfo(cmd)
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            p.ArgumentList.Add("/c");
+            p.ArgumentList.Add(line);
+            return p;
+        }
+
+        var logs = new List<string>();
+        Check(await OrcaJump.RunAsync(Cmd("exit 0"), TimeSpan.FromSeconds(5), logs.Add) && logs.Count == 0,
+            "run: exit code 0 is success, nothing logged");
+        Check(!await OrcaJump.RunAsync(Cmd("exit 3"), TimeSpan.FromSeconds(5), logs.Add),
+            "run: non-zero exit code is failure");
+        Check(logs.Count == 1 && logs[0].Contains("exit code 3"), "run: failure writes one log line");
+
+        var sw = Stopwatch.StartNew();
+        var finished = await OrcaJump.RunAsync(Cmd("ping -n 30 127.0.0.1 >nul"), TimeSpan.FromMilliseconds(500), logs.Add);
+        sw.Stop();
+        Check(!finished && sw.Elapsed < TimeSpan.FromSeconds(10), "run: timeout stops the process and fails");
+        Check(logs.Count == 2 && logs[1].Contains("timed out"), "run: timeout writes one log line");
+
+        var missing = new ProcessStartInfo(@"C:\no-such-dir\orca.exe") { UseShellExecute = false, CreateNoWindow = true };
+        Check(!await OrcaJump.RunAsync(missing, TimeSpan.FromSeconds(5), logs.Add) && logs.Count == 3,
+            "run: a missing exe is a logged failure, not a crash");
+
+        Check(!await OrcaJump.TrySwitchAsync(null, "not a handle", logs.Add) && logs.Count == 4,
+            "switch: a malformed handle is refused before any process starts");
+    }
+
     private static async Task ServerRoundTrip()
     {
         // Best-effort live socket check. Some sandboxes intercept direct
@@ -195,11 +349,11 @@ public static class Program
             using var http = new HttpClient(new HttpClientHandler { UseProxy = false })
             { Timeout = TimeSpan.FromSeconds(5) };
             var resp = await http.PostAsync("http://127.0.0.1:18765/event",
-                new StringContent("{\"session_id\":\"net-1\",\"type\":\"done\",\"source\":\"proj\",\"surface\":\"terminal\"}",
+                new StringContent("{\"session_id\":\"net-1\",\"type\":\"done\",\"source\":\"proj\",\"surface\":\"terminal\",\"orca_terminal\":\"" + OrcaHandle + "\"}",
                     System.Text.Encoding.UTF8, "application/json"));
             Check(resp.IsSuccessStatusCode, "POST /event answers 200");
 
-            var resp2 = await http.GetAsync("http://127.0.0.1:18765/done?source=old&hwnd=7&type=done");
+            var resp2 = await http.GetAsync("http://127.0.0.1:18765/done?source=old&hwnd=7&type=done&orca_terminal=term_abc123");
             Check(resp2.IsSuccessStatusCode, "legacy GET /done answers 200");
 
             await Task.Delay(300);
@@ -208,8 +362,10 @@ public static class Program
                 Check(received.Count == 2, "server delivered both events");
                 Check(received[0].SessionId == "net-1" && received[0].Kind == NotifyEventKind.Done,
                     "POST event content is intact");
+                Check(received[0].OrcaTerminal == OrcaHandle, "POST orca_terminal survives the socket");
                 Check(received[1].Source == "old" && received[1].Kind == NotifyEventKind.Done,
                     "legacy event content is intact");
+                Check(received[1].OrcaTerminal == "term_abc123", "legacy GET orca_terminal survives the socket");
             }
         }
         catch (HttpRequestException ex) when (ex.Message.Contains("invalid status line"))

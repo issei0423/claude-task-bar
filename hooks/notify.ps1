@@ -62,13 +62,20 @@ try {
   }
 } catch {}
 
+# Orca sets ORCA_TERMINAL_HANDLE in each of its terminal tabs; the app uses
+# it to switch to that exact tab. Only the documented shape is forwarded
+# (case-sensitive, \z so a trailing newline does not slip through).
+$orcaTerminal = "$env:ORCA_TERMINAL_HANDLE"
+if ($orcaTerminal -cnotmatch '^term_[A-Za-z0-9_-]{1,128}\z') { $orcaTerminal = '' }
+
 $body = @{
-  session_id = "$sessionId"
-  type       = $type
-  source     = $source
-  cwd        = $cwd
-  hwnd       = "$hwnd"
-  surface    = $surface
+  session_id    = "$sessionId"
+  type          = $type
+  source        = $source
+  cwd           = $cwd
+  hwnd          = "$hwnd"
+  surface       = $surface
+  orca_terminal = $orcaTerminal
 } | ConvertTo-Json -Compress
 
 $sent = $false
@@ -82,6 +89,7 @@ if (-not $sent) {
   $sf  = [uri]::EscapeDataString($surface)
   $sid = [uri]::EscapeDataString("$sessionId")
   $cw  = [uri]::EscapeDataString($cwd)
-  $url = "http://127.0.0.1:$port/done?source=$src&hwnd=$hwnd&type=$t&surface=$sf&session_id=$sid&cwd=$cw"
+  $ot  = [uri]::EscapeDataString($orcaTerminal)
+  $url = "http://127.0.0.1:$port/done?source=$src&hwnd=$hwnd&type=$t&surface=$sf&session_id=$sid&cwd=$cw&orca_terminal=$ot"
   try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri $url | Out-Null } catch {}
 }
