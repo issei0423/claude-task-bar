@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -15,7 +13,6 @@ public partial class OverlayWindow : Window
     private string _pendingHwnd = "";
     private string _pendingSource = "";
     private readonly DispatcherTimer _autoHide;
-    private readonly Dictionary<string, BitmapImage> _cache = new();
     private const double OffX = 360;
 
     public OverlayWindow()
@@ -56,33 +53,7 @@ public partial class OverlayWindow : Window
         _autoHide.Start();
     }
 
-    private BitmapImage? LoadMascot(string surface)
-    {
-        string file = surface switch
-        {
-            "terminal" => "mascot-terminal.png",
-            "ide" => "mascot-ide.png",
-            "web" => "mascot-web.png",
-            "chrome" => "mascot-chrome.png",
-            "desktop" => "mascot-desktop.png",
-            _ => "mascot.png"
-        };
-        if (_cache.TryGetValue(file, out var cached)) return cached;
-        var path = Path.Combine(AppContext.BaseDirectory, "assets", file);
-        if (!File.Exists(path)) path = Path.Combine(AppContext.BaseDirectory, "assets", "mascot.png");
-        if (!File.Exists(path)) return null;
-        try
-        {
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.UriSource = new Uri(path);
-            bmp.EndInit();
-            _cache[file] = bmp;
-            return bmp;
-        }
-        catch { return null; }
-    }
+    private BitmapImage? LoadMascot(string surface) => MascotImages.Load(surface);
 
     private void Jump()
     {

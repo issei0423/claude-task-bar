@@ -1,14 +1,1 @@
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\Desktop\\claude-task-bar\\hooks\\notify.ps1\""
-          }
-        ]
-      }
-    ]
-  }
-}
+{"_comment":"Merge into Claude Code settings.json hooks. Path assumes the installer location (%LOCALAPPDATA%\\claude-task-bar). notify.ps1 reads hook_event_name from stdin, so every event uses the same command; Notification also passes -Type ask as a fallback.","hooks":{"Notification":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \"%LOCALAPPDATA%\\claude-task-bar\\hooks\\notify.ps1\" -Type ask","type":"command"}]}],"SessionEnd":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \"%LOCALAPPDATA%\\claude-task-bar\\hooks\\notify.ps1\"","type":"command"}]}],"SessionStart":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \"%LOCALAPPDATA%\\claude-task-bar\\hooks\\notify.ps1\"","type":"command"}]}],"Stop":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \"%LOCALAPPDATA%\\claude-task-bar\\hooks\\notify.ps1\"","type":"command"}]}],"UserPromptSubmit":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \"%LOCALAPPDATA%\\claude-task-bar\\hooks\\notify.ps1\"","type":"command"}]}]}}

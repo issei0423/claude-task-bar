@@ -38,6 +38,11 @@ function Add-CtbHook($evt, $cmd) {
 }
 Add-CtbHook 'Stop' $cmdDone
 Add-CtbHook 'Notification' $cmdAsk
+# Pet-bar lifecycle events: notify.ps1 maps these from hook_event_name,
+# so they use the plain command (no -Type needed).
+Add-CtbHook 'SessionStart' $cmdDone
+Add-CtbHook 'UserPromptSubmit' $cmdDone
+Add-CtbHook 'SessionEnd' $cmdDone
 [System.IO.File]::WriteAllText($settingsPath, ($json | ConvertTo-Json -Depth 20))
 
 # shortcuts: Startup (auto-run at login) + Desktop
