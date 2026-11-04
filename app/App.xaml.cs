@@ -117,7 +117,10 @@ public partial class App : System.Windows.Application
             });
         }
 
-        _registry.Acknowledge(s.Id);
+        // Then the pet leaves the bar, whatever its status and whether the
+        // tab switch works (owner, 2026-11-04). Everything the switch needs
+        // was copied into locals above. The session's next event brings it back.
+        _registry.Dismiss(s.Id);
     }
 
     private static void ShowSplash()

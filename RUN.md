@@ -34,6 +34,7 @@ powershell -Command "Invoke-WebRequest -UseBasicParsing -Method Post -ContentTyp
 
 → ペットバーにペットが出て、完了の吹き出しが出れば受信OK。
 （画面の端から大きいマスコットが滑り出る旧通知は 2026-11-04 にやめた。知らせるのはペットバーだけ）
+そのペットを押すとペットが消える。同じコマンドをもう一度送ると、また出る。
 旧形式の `GET /done?source=..&hwnd=..&type=..` も互換のため動き続ける。
 
 ## 3. Claude Code のフックを設定
@@ -64,7 +65,9 @@ Claude Code の各フック
        orca.exe terminal switch --terminal <orca_terminal> --json を呼び、
        Orca の中のそのタブに切り替える（上限5秒。失敗しても窓は出たまま、
        理由は %TEMP%\ctb.log に1行）
+       そのあとペットはバーと台帳から消える（状態・切り替えの成否によらない）
      ペットの × -> ペットだけ消す（ジャンプしない）
+     どちらで消えても、そのセッションの次のイベント（完了・質問待ちなど）でまた出る
   （旧 OverlayWindow のスライドイン通知は呼ばない。完了・質問待ちもペットバーで知らせる）
 ```
 

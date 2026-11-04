@@ -28,6 +28,7 @@ public static class Program
         TwoDoneSessionsBothSurvive();
         OverflowPriority();
         AcknowledgeAndDismiss();
+        DismissedPetComesBack();
         JsonParsing();
         LegacyQueryParsing();
         ConfigLoading();
@@ -118,6 +119,22 @@ public static class Program
         Check(r.Count == 1, "dismiss removes only that pet");
         r.Clear();
         Check(r.Count == 0, "clear empties the ledger");
+    }
+
+    private static void DismissedPetComesBack()
+    {
+        // Clicking a pet jumps and then dismisses it (owner, 2026-11-04).
+        // The session is still alive, so its next event must bring the pet back.
+        var r = new SessionRegistry();
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "j", Source = "proj", OrcaTerminal = "term_abc123" }, T0);
+        r.Dismiss("j");
+        Check(r.Count == 0, "dismissed pet leaves the bar");
+
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Done, SessionId = "j", Source = "proj", OrcaTerminal = "term_abc123" }, T0.AddMinutes(1));
+        Check(r.Count == 1, "next event (Stop) after dismiss brings the pet back");
+        var back = r.Snapshot()[0];
+        Check(back.Id == "j" && back.Status == SessionStatus.DoneUnseen, "returned pet shows as done (unseen)");
+        Check(back.OrcaTerminal == "term_abc123", "returned pet can jump to its Orca tab again");
     }
 
     private static void JsonParsing()
