@@ -59,6 +59,9 @@ public static class Program
         ReconcileThenStage();
         SetHwndOnlyWhenEmpty();
         LeftSessionsStayAway();
+        JumpChooseWindow();
+        JumpPickTab();
+        SetConsoleHwndOverwrites();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -1058,6 +1061,79 @@ public static class Program
         c.Clear();
         Check(!c.Reconcile(Entry("c", 3, "busy"), T0.AddSeconds(1)) && c.Count == 0, "left: cleared pets are not brought back by the list");
         Check(c.Reconcile(Entry("other", 4, "busy"), T0.AddSeconds(1)) && c.Count == 1, "left: other sessions are still discovered");
+    }
+
+    private static void JumpChooseWindow()
+    {
+        var asked = new List<string>();
+        Func<string, bool> all = h => { asked.Add(h); return true; };
+        Func<string, bool> none = h => { asked.Add(h); return false; };
+        Func<string, bool> only222 = h => { asked.Add(h); return h == "222"; };
+
+        Check(JumpTarget.ChooseWindow("111", "222", all) == "111", "choose: a usable console window wins");
+        Check(JumpTarget.ChooseWindow("", "222", all) == "222", "choose: no console window -> the fallback");
+        Check(JumpTarget.ChooseWindow(null, "222", all) == "222", "choose: null console window -> the fallback");
+        Check(JumpTarget.ChooseWindow("111", "222", only222) == "222", "choose: an unusable console window -> the fallback");
+        Check(JumpTarget.ChooseWindow("111", "222", none) == "", "choose: neither usable -> empty");
+        Check(JumpTarget.ChooseWindow("", "", all) == "" && JumpTarget.ChooseWindow(null, null, all) == "", "choose: nothing at all -> empty");
+
+        asked.Clear();
+        foreach (var bad in new[] { "0", "-5", "abc", "", "1.5", "12x", " " })
+            Check(JumpTarget.ChooseWindow(bad, bad, all) == "", "choose: '" + bad + "' is not read as a window");
+        Check(asked.Count == 0, "choose: usable is never asked about a value that is not a handle");
+
+        asked.Clear();
+        Check(JumpTarget.ChooseWindow("0", "222", all) == "222" && asked.Count == 1 && asked[0] == "222",
+            "choose: a bad console value is skipped and only the fallback is asked about");
+        asked.Clear();
+        JumpTarget.ChooseWindow("111", "222", all);
+        Check(asked.Count == 1 && asked[0] == "111", "choose: once the console window is usable the fallback is not asked");
+        Check(JumpTarget.ChooseWindow("  333 ", "", all) == "333", "choose: spaces around a number are ignored");
+    }
+
+    private static void JumpPickTab()
+    {
+        var tabs = new List<string> { "alpha", "W4-probe", "Beta" };
+        Check(JumpTarget.PickTab(tabs, "W4-probe") == 1, "tab: exactly one match -> its index");
+        Check(JumpTarget.PickTab(tabs, "alpha") == 0 && JumpTarget.PickTab(tabs, "Beta") == 2, "tab: first and last");
+        Check(JumpTarget.PickTab(tabs, "gamma") == -1, "tab: no match -> -1");
+        Check(JumpTarget.PickTab(new List<string> { "x", "same", "same" }, "same") == -1, "tab: two tabs with the same name -> -1");
+        Check(JumpTarget.PickTab(tabs, "") == -1 && JumpTarget.PickTab(tabs, "   ") == -1 && JumpTarget.PickTab(tabs, null) == -1,
+            "tab: an empty, blank or missing title -> -1");
+        Check(JumpTarget.PickTab(tabs, "w4-probe") == -1 && JumpTarget.PickTab(tabs, "BETA") == -1, "tab: a different case does not match");
+        Check(JumpTarget.PickTab(new List<string>(), "alpha") == -1, "tab: no tabs -> -1");
+        Check(JumpTarget.PickTab(tabs, "W4-probe ") == -1, "tab: the name must be exactly the title");
+    }
+
+    private static void SetConsoleHwndOverwrites()
+    {
+        var r = new SessionRegistry();
+        int changes = 0;
+        r.Changed += () => changes++;
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "a", Hwnd = "111" }, T0);
+        r.Apply(Ev(NotifyEventKind.Running, "b"), T0);
+        changes = 0;
+
+        r.SetConsoleHwnd("a", "222");
+        r.SetConsoleHwnd("b", "333");
+        var snap = r.Snapshot();
+        Check(snap.First(s => s.Id == "a").Hwnd == "222", "console hwnd: replaces the hook's hwnd");
+        Check(snap.First(s => s.Id == "b").Hwnd == "333", "console hwnd: fills an empty hwnd too");
+        r.SetConsoleHwnd("a", "");
+        r.SetConsoleHwnd("a", "  ");
+        Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "222", "console hwnd: an empty value is not set");
+        r.SetConsoleHwnd("nope", "444");
+        Check(r.Count == 2, "console hwnd: an unknown id does nothing");
+        Check(changes == 0, "console hwnd: Changed is not raised");
+
+        // SetHwnd keeps its own rule (only when empty).
+        r.SetHwnd("a", "999");
+        Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "222", "console hwnd: SetHwnd still does not overwrite");
+        // A later hook event brings its own hwnd back; setting the console one again wins again.
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Done, SessionId = "a", Hwnd = "111" }, T0.AddSeconds(1));
+        Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "111", "console hwnd: a later hook event sets its hwnd (as before)");
+        r.SetConsoleHwnd("a", "222");
+        Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "222", "console hwnd: and the console's window replaces it again");
     }
 
     private static async Task ServerRoundTrip()
