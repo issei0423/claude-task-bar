@@ -334,10 +334,41 @@ public partial class App : System.Windows.Application
     private void StartWatchingSessions()
     {
         CheckSessions(); // once right away, so pets of sessions that are already open appear at startup
+        _petBar?.StartAnnouncing(); // ...and those do not play the birth animation; pets from now on do
+        CheckUsage();
         _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _watch.Tick += (_, __) => CheckSessions();
+        _watch.Tick += (_, __) => { CheckSessions(); CheckUsage(); };
         _watch.Start();
         StartWatchingList();
+    }
+
+    private bool _fleeing;
+
+    /// <summary>
+    /// Read the 5-hour usage and tell the pets to run away when it has reached
+    /// the threshold. Unknown (no file, broken) or switched off = they stay.
+    /// </summary>
+    private void CheckUsage()
+    {
+        bool flee = false;
+        double? used = null;
+        try
+        {
+            if (_config.FleeEnabled)
+            {
+                used = UsageReader.ReadFile(_config.UsageFile, DateTimeOffset.Now);
+                flee = UsageReader.ShouldFlee(used, _config.FleeThreshold);
+            }
+        }
+        catch (Exception ex) { LogOnce("usage check failed: " + ex.GetType().Name + ": " + ex.Message); }
+
+        if (flee != _fleeing)
+        {
+            _fleeing = flee;
+            OrcaJump.Log("fleeing " + (flee ? "on" : "off") + " (5-hour usage " +
+                (used.HasValue ? used.Value.ToString("0.#") + "%" : "unknown") + ", threshold " + _config.FleeThreshold + "%)");
+        }
+        _petBar?.SetFleeing(flee);
     }
 
     private void CheckSessions()

@@ -66,6 +66,7 @@ public partial class PetBarWindow : Window
     private readonly PetStage _stage = new();
     private readonly Dictionary<string, SessionInfo> _sessions = new();
     private readonly Dictionary<string, PetView> _views = new();
+    private bool _announceNew; // false until startup is over: pets that already exist do not play the birth animation
     private readonly TextBlock _overflow;
 
     private PetSheet? _sheet;
@@ -112,8 +113,9 @@ public partial class PetBarWindow : Window
             var dir = Path.Combine(AppContext.BaseDirectory, "assets", "pet");
             var sheet = PetSheet.Load(Path.Combine(dir, "pet.json"));
             var loaded = new Dictionary<string, BitmapSource[]>();
-            foreach (var (name, anim) in sheet.Anims)
+            foreach (var anim in sheet.AllAnims)
             {
+                var name = anim.Id;
                 var png = new BitmapImage();
                 png.BeginInit();
                 png.CacheOption = BitmapCacheOption.OnLoad;
@@ -137,10 +139,12 @@ public partial class PetBarWindow : Window
             }
             foreach (var kv in loaded) _frames[kv.Key] = kv.Value;
             _sheet = sheet;
+            _stage.UseSheet(sheet);
         }
         catch (Exception ex)
         {
             _sheet = null;
+            _stage.UseSheet(null);
             _frames.Clear();
             LoadError = ex.GetType().Name + ": " + ex.Message;
             OrcaJump.Log("pet pictures could not be loaded: " + LoadError);
@@ -164,6 +168,24 @@ public partial class PetBarWindow : Window
         if (_tick.IsEnabled) Draw();
     }
 
+    /// <summary>Pets that appear from now on play the birth animation (the ones shown at startup did not).</summary>
+    public void StartAnnouncing()
+    {
+        // Queued behind the refreshes that the startup discovery already queued, so those still see "false".
+        Dispatcher.BeginInvoke(new Action(() => _announceNew = true));
+    }
+
+    /// <summary>Run away (high usage) or go back to the seats.</summary>
+    public void SetFleeing(bool on)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => SetFleeing(on));
+            return;
+        }
+        _stage.SetFleeing(on);
+    }
+
     public void Refresh()
     {
         if (!Dispatcher.CheckAccess())
@@ -176,9 +198,14 @@ public partial class PetBarWindow : Window
         var ordered = _registry.Snapshot();
         var (displayed, overflow) = PetSelection.Select(ordered);
 
+        var before = new Dictionary<string, SessionInfo>(_sessions);
         _sessions.Clear();
         foreach (var s in ordered) _sessions[s.Id] = s;
-        _stage.Sync(displayed);
+        _stage.Sync(displayed, _announceNew);
+        // A pet that is leaving still needs its session's name and so on until it is gone.
+        foreach (var a in _stage.Actors)
+            if (a.Leaving && !_sessions.ContainsKey(a.SessionId) && before.TryGetValue(a.SessionId, out var last))
+                _sessions[a.SessionId] = last;
 
         _overflowCount = overflow.Count;
         if (overflow.Count > 0)
@@ -216,6 +243,15 @@ public partial class PetBarWindow : Window
         double dt = now - _lastMs;
         _lastMs = now;
         _stage.Advance(dt);
+        if (_stage.Actors.Count == 0)
+        {
+            // The last pet finished leaving.
+            _tick.Stop();
+            _clock.Stop();
+            ClearViews();
+            Hide();
+            return;
+        }
 
         if (now - _lastSlowMs >= 1000)
         {
@@ -293,16 +329,17 @@ public partial class PetBarWindow : Window
             v.Img.Height = framePx / dpi;
 
             var cells = _frames[a.Anim];
-            int fi = Math.Min(sheet.Anims[a.Anim].FrameAt(a.AnimMs), cells.Length - 1);
+            int fi = Math.Min(sheet.Find(a.Anim)!.FrameAt(a.AnimMs), cells.Length - 1);
             if (!ReferenceEquals(v.Img.Source, cells[fi])) v.Img.Source = cells[fi];
-            v.SetFlip(a.FacingLeft);
+            v.SetFlip(a.Flip); // only when the sheet has no left-facing picture
+            v.Hit.IsHitTestVisible = !a.Leaving; // a pet that is leaving cannot be clicked
 
             int leftPx = (int)Math.Round((a.X - sheet.Frame / 2.0) * k);
             Canvas.SetLeft(v.Img, leftPx / dpi);
             Canvas.SetTop(v.Img, topPx / dpi);
 
             // The hit box mirrors with the picture.
-            int hitX = a.FacingLeft ? sheet.Frame - sheet.Hit.X - sheet.Hit.W : sheet.Hit.X;
+            int hitX = a.Flip ? sheet.Frame - sheet.Hit.X - sheet.Hit.W : sheet.Hit.X;
             v.Hit.Width = sheet.Hit.W * k / dpi;
             v.Hit.Height = sheet.Hit.H * k / dpi;
             Canvas.SetLeft(v.Hit, (leftPx + hitX * k) / dpi);
@@ -314,6 +351,17 @@ public partial class PetBarWindow : Window
             {
                 v.SetBubble(a.Status == SessionStatus.Asking ? "聞きたいことがある！" : "終わったよー！",
                     session.DisplayName);
+                var size = v.BubbleSize;
+                double centre = (leftPx + framePx / 2.0) / dpi;
+                double bx = Math.Max(0, Math.Min(centre - size.Width / 2, Width - size.Width));
+                double by = Math.Max(0, topPx / dpi - size.Height);
+                Canvas.SetLeft(v.Bubble, Math.Round(bx * dpi) / dpi);
+                Canvas.SetTop(v.Bubble, Math.Round(by * dpi) / dpi);
+            }
+            else if (a.Muttering)
+            {
+                // A running pet grumbles for a moment now and then (same bubble as the calls).
+                v.SetBubble(PetStage.MutterText, session.DisplayName);
                 var size = v.BubbleSize;
                 double centre = (leftPx + framePx / 2.0) / dpi;
                 double bx = Math.Max(0, Math.Min(centre - size.Width / 2, Width - size.Width));
@@ -341,6 +389,7 @@ public partial class PetBarWindow : Window
 
     private void JumpTo(string id)
     {
+        foreach (var a in _stage.Actors) if (a.SessionId == id && a.Leaving) return;
         if (_sessions.TryGetValue(id, out var s)) _onJump(s);
     }
 
