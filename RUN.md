@@ -34,7 +34,8 @@ powershell -Command "Invoke-WebRequest -UseBasicParsing -Method Post -ContentTyp
 
 → ペットバーにペットが出て、完了の吹き出しが出れば受信OK。
 （画面の端から大きいマスコットが滑り出る旧通知は 2026-11-04 にやめた。知らせるのはペットバーだけ）
-そのペットを押すとペットが消える。同じコマンドをもう一度送ると、また出る。
+そのペットを押すとそのセッションへ飛ぶ。ペットは消えず、席へ戻って立つ（完了 → 確認済み）。
+右クリックで消せる。消えたペットは、同じコマンドをもう一度送ると、また出る。
 旧形式の `GET /done?source=..&hwnd=..&type=..` も互換のため動き続ける。
 
 ## 3. Claude Code のフックを設定
@@ -52,6 +53,7 @@ powershell -Command "Invoke-WebRequest -UseBasicParsing -Method Post -ContentTyp
 ```
 Claude Code の各フック
   -> notify.ps1（session_id / cwd / hook_event_name / hwnd / surface を収集。
+       親プロセスをさかのぼって、最初の claude / node の PID を pid として足す（無ければ 0）。
        Orca の中なら環境変数 ORCA_TERMINAL_HANDLE を orca_terminal として足す。
        形 term_[A-Za-z0-9_-]{1,128} に合わない値は送らない）
   -> POST http://127.0.0.1:<port>/event  (JSON)
@@ -65,9 +67,14 @@ Claude Code の各フック
        orca.exe terminal switch --terminal <orca_terminal> --json を呼び、
        Orca の中のそのタブに切り替える（上限5秒。失敗しても窓は出たまま、
        理由は %TEMP%\ctb.log に1行）
-       そのあとペットはバーと台帳から消える（状態・切り替えの成否によらない）
-     ペットを右クリック -> ペットだけ消す（ジャンプしない。v3 で × から右クリックに変えた）
-     どちらで消えても、そのセッションの次のイベント（完了・質問待ちなど）でまた出る
+       ペットは消えない。知らせを引っこめて席へ戻る
+       （完了(未確認) → 完了(確認済み)で立つ、質問待ち → 実行中でノートPCを叩く。実行中はそのまま）
+     ペットが居なくなるとき：
+       ・SessionEnd のイベントが来た
+       ・pid のプロセスが無くなった（5秒おきに確認。pid が使い回されたときも）。
+         pid が無いセッションは、hwnd の窓が無くなったとき。どちらも無いもの（トレイのテスト用）は消えない
+       ・ペットを右クリック -> ペットだけ消す（ジャンプしない）
+     右クリックで消したあとも、そのセッションの次のイベントでまた出る
   （旧 OverlayWindow のスライドイン通知は呼ばない。完了・質問待ちもペットバーで知らせる）
 ```
 

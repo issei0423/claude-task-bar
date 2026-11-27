@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using ClaudeTaskBar;
@@ -44,6 +45,12 @@ public static class Program
         PetFrameAt();
         PetStageBehaviour();
         ConfigPetScale();
+        VisitKeepsThePet();
+        VisitThenStage();
+        PidParsing();
+        PidInLedger();
+        LivenessProcess();
+        LivenessWindow();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -602,6 +609,238 @@ public static class Program
                 "petScale: port and orcaPath still read alongside it");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static void VisitKeepsThePet()
+    {
+        var r = new SessionRegistry();
+        int changes = 0;
+        r.Changed += () => changes++;
+
+        r.Apply(Ev(NotifyEventKind.Done, "d"), T0);
+        changes = 0;
+        r.Visit("d");
+        Check(r.Snapshot()[0].Status == SessionStatus.DoneSeen && r.Count == 1, "visit: done (unseen) -> done (seen), the pet stays");
+        Check(changes == 1, "visit: a change raises Changed once");
+        r.Visit("d");
+        Check(r.Snapshot()[0].Status == SessionStatus.DoneSeen && changes == 1, "visit: done (seen) stays, no Changed");
+
+        r.Apply(Ev(NotifyEventKind.Ask, "q"), T0.AddMinutes(1));
+        changes = 0;
+        r.Visit("q");
+        var q = r.Snapshot().First(s => s.Id == "q");
+        Check(q.Status == SessionStatus.Running && r.Count == 2, "visit: asking -> running, the pet stays");
+        Check(changes == 1, "visit: asking -> running raises Changed once");
+
+        r.Apply(Ev(NotifyEventKind.Running, "run"), T0.AddMinutes(2));
+        changes = 0;
+        r.Visit("run");
+        Check(r.Snapshot().First(s => s.Id == "run").Status == SessionStatus.Running && changes == 0,
+            "visit: running stays running, no Changed");
+
+        r.Visit("no-such-id");
+        Check(r.Count == 3 && changes == 0, "visit: an unknown id does nothing");
+
+        // The old behaviours are untouched: Dismiss still removes, Acknowledge still only acknowledges.
+        r.Dismiss("run");
+        Check(r.Count == 2, "visit: Dismiss still removes the pet");
+    }
+
+    private static void VisitThenStage()
+    {
+        var r = new SessionRegistry();
+        var stage = new PetStage();
+        void Sync() => stage.Sync(PetSelection.Select(r.Snapshot()).Displayed);
+        double dist = PetStage.HomeX(0) - PetStage.FrontX(0);
+
+        // A finished pet that has come out walks home when visited and idles there.
+        r.Apply(Ev(NotifyEventKind.Done, "d"), T0);
+        Sync();
+        stage.Advance(1e9);
+        var d = stage.Actors[0];
+        Check(d.AtFront && d.Anim == "done" && d.X == PetStage.FrontX(0), "visit+stage: the finished pet is out in front");
+        r.Visit("d");
+        Sync();
+        stage.Advance(100);
+        Check(stage.Actors.Count == 1 && d.Anim == "walk" && !d.FacingLeft && !d.AtFront && d.X > PetStage.FrontX(0),
+            "visit+stage: after the visit the pet walks right, towards its seat");
+        stage.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(stage.Actors.Count == 1 && d.X == PetStage.HomeX(0) && d.Anim == "idle" && !d.AtFront,
+            "visit+stage: it stands at its seat and idles; the pet is still there");
+
+        // An asking pet goes back to its seat and types.
+        var r2 = new SessionRegistry();
+        var stage2 = new PetStage();
+        r2.Apply(Ev(NotifyEventKind.Ask, "q"), T0);
+        stage2.Sync(PetSelection.Select(r2.Snapshot()).Displayed);
+        stage2.Advance(1e9);
+        var q = stage2.Actors[0];
+        Check(q.AtFront && q.Anim == "ask", "visit+stage: the asking pet is out in front");
+        r2.Visit("q");
+        stage2.Sync(PetSelection.Select(r2.Snapshot()).Displayed);
+        stage2.Advance(100);
+        Check(q.Anim == "walk" && !q.FacingLeft, "visit+stage: the asking pet walks back after the visit");
+        stage2.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(stage2.Actors.Count == 1 && q.X == PetStage.HomeX(0) && q.Anim == "typing",
+            "visit+stage: it is back at its seat typing; the pet is still there");
+
+        // A running pet does not move when visited.
+        var r3 = new SessionRegistry();
+        var stage3 = new PetStage();
+        r3.Apply(Ev(NotifyEventKind.Running, "x"), T0);
+        stage3.Sync(PetSelection.Select(r3.Snapshot()).Displayed);
+        stage3.Advance(500);
+        r3.Visit("x");
+        stage3.Sync(PetSelection.Select(r3.Snapshot()).Displayed);
+        stage3.Advance(500);
+        Check(stage3.Actors[0].X == PetStage.HomeX(0) && stage3.Actors[0].Anim == "typing",
+            "visit+stage: a running pet visited stays at its seat typing");
+    }
+
+    private static void PidParsing()
+    {
+        int P(string json) => NotifyEvent.FromJson(json).Pid;
+        Check(P("{\"session_id\":\"p\",\"pid\":4321}") == 4321, "pid: a number is read");
+        Check(P("{\"session_id\":\"p\",\"pid\":\"4321\"}") == 4321, "pid: a string of digits is read");
+        Check(P("{\"session_id\":\"p\"}") == 0, "pid: missing -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":0}") == 0, "pid: 0 -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":-7}") == 0, "pid: negative -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":\"abc\"}") == 0, "pid: letters -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":\"12abc\"}") == 0, "pid: digits with letters -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":\"\"}") == 0, "pid: empty string -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":1.5}") == 0, "pid: a fraction -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":99999999999}") == 0, "pid: too big for an int -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":true}") == 0, "pid: a boolean -> 0");
+        Check(P("{\"session_id\":\"p\",\"pid\":null}") == 0, "pid: null -> 0");
+        var ev = NotifyEvent.FromJson("{\"session_id\":\"p\",\"type\":\"done\",\"source\":\"proj\",\"pid\":4321}");
+        Check(ev.Kind == NotifyEventKind.Done && ev.Source == "proj" && ev.SessionId == "p", "pid: the rest of the event is unchanged");
+        Check(NotifyEvent.FromQuery("/done?session_id=p&type=done&pid=4321").Pid == 0, "pid: the legacy GET route does not carry it");
+    }
+
+    private static void PidInLedger()
+    {
+        var r = new SessionRegistry();
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Started, SessionId = "p", Pid = 777 }, T0);
+        Check(r.Snapshot()[0].Pid == 777, "pid ledger: an event with a pid sets SessionInfo.Pid");
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "p" }, T0.AddMinutes(1));
+        Check(r.Snapshot()[0].Pid == 777, "pid ledger: an event without a pid keeps it");
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Done, SessionId = "p", Pid = 888 }, T0.AddMinutes(2));
+        Check(r.Snapshot()[0].Pid == 888, "pid ledger: a new pid overwrites the old one");
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "n" }, T0);
+        Check(r.Snapshot().First(s => s.Id == "n").Pid == 0, "pid ledger: a session that never sent one has pid 0");
+    }
+
+    private static SessionInfo Live(string id, int pid = 0, string hwnd = "") =>
+        new SessionInfo(id) { Pid = pid, Hwnd = hwnd };
+
+    private static void LivenessProcess()
+    {
+        var d1 = new DateTime(2026, 11, 27, 9, 0, 0, DateTimeKind.Local);
+        var d2 = d1.AddMinutes(30);
+        var starts = new Dictionary<int, DateTime?>();
+        int processCalls = 0;
+        Func<int, DateTime?> start = pid => { processCalls++; return starts.TryGetValue(pid, out var v) ? v : null; };
+        Func<string, bool> noWindow = _ => throw new InvalidOperationException("windowExists must not be asked");
+
+        // Alive: never returned.
+        var live = new SessionLiveness();
+        var a = Live("a", pid: 100);
+        starts[100] = d1;
+        Check(live.FindGone(new[] { a }, start, noWindow).Count == 0, "liveness: a live process is not returned (first look)");
+        Check(live.FindGone(new[] { a }, start, noWindow).Count == 0, "liveness: a live process is not returned (second look)");
+        Check(processCalls == 2, "liveness: the process is looked at every time");
+
+        // Process ends.
+        starts[100] = null;
+        var gone = live.FindGone(new[] { a }, start, noWindow);
+        Check(gone.Count == 1 && gone[0] == "a", "liveness: a process that was seen alive and is now gone is returned");
+
+        // Start time differs (pid reused).
+        var live2 = new SessionLiveness();
+        starts[100] = d1;
+        live2.FindGone(new[] { a }, start, noWindow);
+        starts[100] = d2;
+        gone = live2.FindGone(new[] { a }, start, noWindow);
+        Check(gone.Count == 1 && gone[0] == "a", "liveness: the same pid with a different start time is returned (pid reused)");
+
+        // Never seen alive: left alone.
+        var live3 = new SessionLiveness();
+        var b = Live("b", pid: 200);
+        starts[200] = null;
+        Check(live3.FindGone(new[] { b }, start, noWindow).Count == 0, "liveness: a pid never seen alive is not returned");
+        Check(live3.FindGone(new[] { b }, start, noWindow).Count == 0, "liveness: ... however often it is looked at");
+        starts[200] = d1;
+        live3.FindGone(new[] { b }, start, noWindow);
+        starts[200] = null;
+        Check(live3.FindGone(new[] { b }, start, noWindow).Count == 1, "liveness: ... until it has been seen alive");
+
+        // The session's pid changes: the old memory does not count.
+        var live4 = new SessionLiveness();
+        var c = Live("c", pid: 300);
+        starts[300] = d1;
+        live4.FindGone(new[] { c }, start, noWindow);
+        c.Pid = 400;
+        starts[400] = null;
+        Check(live4.FindGone(new[] { c }, start, noWindow).Count == 0, "liveness: a new pid that is not yet seen alive is not returned");
+        starts[400] = d2;
+        live4.FindGone(new[] { c }, start, noWindow);
+        starts[400] = null;
+        Check(live4.FindGone(new[] { c }, start, noWindow).Count == 1, "liveness: the new pid is watched from then on");
+
+        // Memory of sessions that left the ledger is dropped.
+        var live5 = new SessionLiveness();
+        var e = Live("e", pid: 500);
+        starts[500] = d1;
+        live5.FindGone(new[] { e }, start, noWindow);
+        live5.FindGone(new SessionInfo[0], start, noWindow);
+        starts[500] = null;
+        Check(live5.FindGone(new[] { Live("e", pid: 500) }, start, noWindow).Count == 0,
+            "liveness: memory of a session that left the ledger is dropped");
+
+        // Several sessions: only the gone ones, in order.
+        var live6 = new SessionLiveness();
+        var s1 = Live("s1", pid: 601); var s2 = Live("s2", pid: 602); var s3 = Live("s3", pid: 603);
+        starts[601] = d1; starts[602] = d1; starts[603] = d1;
+        live6.FindGone(new[] { s1, s2, s3 }, start, noWindow);
+        starts[601] = null; starts[603] = null;
+        gone = live6.FindGone(new[] { s1, s2, s3 }, start, noWindow);
+        Check(gone.Count == 2 && gone[0] == "s1" && gone[1] == "s3", "liveness: only the gone sessions come back, in order");
+
+        // A session with neither pid nor window is never returned, and nothing is asked.
+        int before = processCalls;
+        Check(new SessionLiveness().FindGone(new[] { Live("none") }, start, noWindow).Count == 0 && processCalls == before,
+            "liveness: a session with neither pid nor hwnd is never returned");
+    }
+
+    private static void LivenessWindow()
+    {
+        var asked = new List<string>();
+        bool exists = true;
+        Func<string, bool> window = h => { asked.Add(h); return exists; };
+        Func<int, DateTime?> noProcess = _ => throw new InvalidOperationException("processStart must not be asked");
+
+        var live = new SessionLiveness();
+        var w = Live("w", hwnd: "12345");
+        Check(live.FindGone(new[] { w }, noProcess, window).Count == 0 && asked.Count == 1 && asked[0] == "12345",
+            "liveness window: an existing window is not returned (and is asked about by its handle text)");
+        exists = false;
+        var gone = live.FindGone(new[] { w }, noProcess, window);
+        Check(gone.Count == 1 && gone[0] == "w", "liveness window: a session with no pid whose window is gone is returned");
+
+        asked.Clear();
+        foreach (var bad in new[] { "0", "", "abc", "-5", "12x", "1.5" })
+        {
+            var sess = Live("bad", hwnd: bad);
+            Check(new SessionLiveness().FindGone(new[] { sess }, noProcess, window).Count == 0,
+                "liveness window: hwnd '" + bad + "' is not judged");
+        }
+        Check(asked.Count == 0, "liveness window: such handles are never asked about");
+
+        // With a pid, the process decides; the window is not consulted.
+        var both = Live("both", pid: 900, hwnd: "12345");
+        var d1 = new DateTime(2026, 11, 27, 9, 0, 0, DateTimeKind.Local);
+        Check(new SessionLiveness().FindGone(new[] { both }, _ => d1, window).Count == 0 && asked.Count == 0,
+            "liveness window: a session with a pid ignores its window");
     }
 
     private static async Task ServerRoundTrip()

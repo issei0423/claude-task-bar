@@ -17,6 +17,8 @@ public partial class App : System.Windows.Application
     private readonly SessionRegistry _registry = new();
     private AppConfig _config = new(); // read once at startup
     private int _testSeq;
+    private DispatcherTimer? _watch;
+    private readonly SessionLiveness _liveness = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -52,6 +54,8 @@ public partial class App : System.Windows.Application
                 "受信ポート " + _config.Port + " を開けませんでした。別のアプリが使っているかもしれません。",
                 WForms.ToolTipIcon.Warning);
         }
+
+        StartWatchingSessions();
 
         // startup: full-screen transparent splash
         Dispatcher.BeginInvoke(new Action(ShowSplash), DispatcherPriority.ApplicationIdle);
@@ -124,11 +128,51 @@ public partial class App : System.Windows.Application
             });
         }
 
-        // Then the pet leaves the bar, whatever its status and whether the
-        // tab switch works (owner, 2026-11-04). Everything the switch needs
-        // was copied into locals above. The session's next event brings it back.
-        _registry.Dismiss(s.Id);
+        // The pet stays (owner, 2026-11-27: it is a resident pet). Going to the
+        // session takes back the call for attention: a finished pet becomes
+        // "seen" and walks home to idle, an asking pet goes back to running.
+        // The pet leaves only when its session is gone (see WatchSessions) or
+        // on a right click. Everything the Orca switch needs was copied above.
+        _registry.Visit(s.Id);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    /// <summary>
+    /// Every few seconds, drop the pets whose session is gone: the Claude
+    /// process ended (or its pid was reused), or, for events that carry no pid,
+    /// the terminal window is gone. Sessions with neither (the tray's test
+    /// sessions) are never dropped here.
+    /// </summary>
+    private void StartWatchingSessions()
+    {
+        _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _watch.Tick += (_, __) =>
+        {
+            try
+            {
+                foreach (var id in _liveness.FindGone(_registry.Snapshot(), ProcessStart, WindowExists))
+                    _registry.Dismiss(id);
+            }
+            catch (Exception ex) { OrcaJump.Log("session watch failed: " + ex.GetType().Name + ": " + ex.Message); }
+        };
+        _watch.Start();
+    }
+
+    private static DateTime? ProcessStart(int pid)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return p.StartTime;
+        }
+        catch (ArgumentException) { return null; } // no such process
+        catch { return DateTime.MinValue; }        // cannot look (e.g. access denied): treat as alive
+    }
+
+    private static bool WindowExists(string hwnd) =>
+        long.TryParse(hwnd, out var h) && IsWindow(new IntPtr(h));
 
     private static void ShowSplash()
     {
@@ -144,6 +188,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _watch?.Stop();
         _server?.Stop();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         base.OnExit(e);

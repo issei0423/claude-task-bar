@@ -30,6 +30,20 @@ public sealed class NotifyEvent
     public string Surface { get; init; } = "";
     /// <summary>Orca terminal tab handle (ORCA_TERMINAL_HANDLE); empty unless it has the documented shape.</summary>
     public string OrcaTerminal { get; init; } = "";
+    /// <summary>
+    /// Process id of the Claude process (nearest claude/node ancestor of the hook);
+    /// 0 when unknown. Only the JSON route carries it.
+    /// </summary>
+    public int Pid { get; init; }
+
+    /// <summary>"1234" -> 1234. Anything that is not plain digits, or is below 1 or too big, is 0.</summary>
+    public static int ParsePid(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        foreach (var c in text) if (c < '0' || c > '9') return 0;
+        return int.TryParse(text, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 1 ? v : 0;
+    }
 
     public string EffectiveId =>
         !string.IsNullOrWhiteSpace(SessionId) ? SessionId :
@@ -85,6 +99,7 @@ public sealed class NotifyEvent
                 Hwnd = Get("hwnd"),
                 Surface = Get("surface"),
                 OrcaTerminal = OrcaJump.IsValidHandle(orcaTerminal) ? orcaTerminal : "",
+                Pid = ParsePid(Get("pid")),
             };
         }
         catch

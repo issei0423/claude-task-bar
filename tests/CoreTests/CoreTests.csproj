@@ -24,6 +24,7 @@
     <Compile Include="..\..\app\OrcaJump.cs" Link="OrcaJump.cs" />
     <Compile Include="..\..\app\PetAnim.cs" Link="PetAnim.cs" />
     <Compile Include="..\..\app\PetStage.cs" Link="PetStage.cs" />
+    <Compile Include="..\..\app\SessionLiveness.cs" Link="SessionLiveness.cs" />
   </ItemGroup>
 
 </Project>
