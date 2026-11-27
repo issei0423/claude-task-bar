@@ -229,6 +229,20 @@ public sealed class SessionRegistry
         }
     }
 
+    /// <summary>
+    /// Set the window the session's console is shown in. Unlike SetHwnd this
+    /// replaces what is there (the console's own answer is surer than the
+    /// hook's parent-process guess). An empty value is ignored. No Changed.
+    /// </summary>
+    public void SetConsoleHwnd(string id, string hwnd)
+    {
+        if (string.IsNullOrWhiteSpace(hwnd)) return;
+        lock (_lock)
+        {
+            if (_sessions.TryGetValue(id, out var s)) s.Hwnd = hwnd;
+        }
+    }
+
     /// <summary>All sessions, in display order (priority, then longest-waiting first).</summary>
     public IReadOnlyList<SessionInfo> Snapshot()
     {

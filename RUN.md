@@ -68,6 +68,11 @@ Claude Code の各フック
   -> PetBarWindow: セッションごとにペット1体（表示は最大5体、
        あふれは「+N」表示、優先順位は 質問待ち → 完了(未確認) → 実行中）
   -> ペットをクリック -> WindowFocus がそのセッションのウィンドウを前面化
+       （窓は、そのセッションのコンソール（pid の AttachConsole → GetConsoleWindow →
+       大元の持ち主）に聞く。聞けなければフックの hwnd。explorer の窓には飛ばない。
+       Windows Terminal では、コンソールの題と同じ名前のタブがちょうど1つあれば、そのタブも選ぶ。
+       押すたびに %TEMP%\ctb.log に「jump: <名前> pid=.. window=.. (console|fallback|none) tab=..」の行が出る。
+       題を手で変えたタブ・同じ題のタブが2つあるときは、窓だけ前に出る）
        orca_terminal があれば、続けて OrcaJump が
        orca.exe terminal switch --terminal <orca_terminal> --json を呼び、
        Orca の中のそのタブに切り替える（上限5秒。失敗しても窓は出たまま、
