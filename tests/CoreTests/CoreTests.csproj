@@ -22,6 +22,8 @@
     <Compile Include="..\..\app\AppConfig.cs" Link="AppConfig.cs" />
     <Compile Include="..\..\app\NotifyServer.cs" Link="NotifyServer.cs" />
     <Compile Include="..\..\app\OrcaJump.cs" Link="OrcaJump.cs" />
+    <Compile Include="..\..\app\PetAnim.cs" Link="PetAnim.cs" />
+    <Compile Include="..\..\app\PetStage.cs" Link="PetStage.cs" />
   </ItemGroup>
 
 </Project>

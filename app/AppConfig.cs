@@ -9,7 +9,7 @@ namespace ClaudeTaskBar;
 /// Missing or broken files fall back to defaults instead of crashing,
 /// but values are no longer hardcoded across the app and the hook:
 /// notify.ps1 reads the same file for the port.
-/// Example: { "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe" }
+/// Example: { "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe", "petScale": 2 }
 /// </summary>
 public sealed class AppConfig
 {
@@ -17,6 +17,11 @@ public sealed class AppConfig
 
     /// <summary>Optional full path to orca.exe; empty means "look in the usual places".</summary>
     public string OrcaPath { get; init; } = "";
+
+    /// <summary>Screen pixels per pet dot (1-6). The pet sheet is 32 dots wide.</summary>
+    public int PetScale { get; init; } = DefaultPetScale;
+
+    public const int DefaultPetScale = 2;
 
     public static string DefaultPath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -46,7 +51,15 @@ public sealed class AppConfig
             {
                 orcaPath = o.GetString() ?? "";
             }
-            return new AppConfig { Port = port, OrcaPath = orcaPath };
+            int petScale = DefaultPetScale;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("petScale", out var ps) &&
+                ps.ValueKind == JsonValueKind.Number &&
+                ps.TryGetInt32(out var sv) && sv >= 1 && sv <= 6)
+            {
+                petScale = sv;
+            }
+            return new AppConfig { Port = port, OrcaPath = orcaPath, PetScale = petScale };
         }
         catch
         {

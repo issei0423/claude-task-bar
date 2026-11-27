@@ -39,6 +39,11 @@ public static class Program
         OrcaCliResolve();
         OrcaStartInfo();
         await OrcaRun();
+        PetSheetReal();
+        PetSheetParseErrors();
+        PetFrameAt();
+        PetStageBehaviour();
+        ConfigPetScale();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -351,6 +356,252 @@ public static class Program
 
         Check(!await OrcaJump.TrySwitchAsync(null, "not a handle", logs.Add) && logs.Count == 4,
             "switch: a malformed handle is refused before any process starts");
+    }
+
+    private static string? FindPetDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var p = Path.Combine(dir.FullName, "app", "assets", "pet");
+            if (File.Exists(Path.Combine(p, "pet.json"))) return p;
+            dir = dir.Parent;
+        }
+        return null;
+    }
+
+    private static void PetSheetReal()
+    {
+        var petDir = FindPetDir();
+        Check(petDir != null, "pet: app/assets/pet/pet.json is found from the test folder");
+        if (petDir == null) return;
+
+        PetSheet? sheet = null;
+        try { sheet = PetSheet.Load(Path.Combine(petDir, "pet.json")); }
+        catch (Exception ex) { Console.WriteLine("  " + ex.Message); }
+        Check(sheet != null, "pet: the real pet.json loads");
+        if (sheet == null) return;
+
+        Check(sheet.Frame == 32 && sheet.Ground == 30, "pet: frame is 32 and the ground row is 30");
+        Check(sheet.Hit.X == 4 && sheet.Hit.Y == 11 && sheet.Hit.W == 24 && sheet.Hit.H == 20, "pet: hit box is read");
+        Check(sheet.Anims.Count == 5, "pet: five animations");
+        foreach (var name in new[] { "typing", "walk", "done", "ask", "idle" })
+        {
+            Check(sheet.Anims.TryGetValue(name, out var a) && a.Id == name, "pet: animation '" + name + "' exists");
+            if (!sheet.Anims.TryGetValue(name, out var anim)) continue;
+            var png = Path.Combine(petDir, anim.File);
+            Check(File.Exists(png), "pet: " + anim.File + " exists");
+            if (!File.Exists(png)) continue;
+            var head = new byte[24];
+            using (var fs = File.OpenRead(png)) { int n = fs.Read(head, 0, head.Length); Check(n == 24, "pet: " + anim.File + " has a header"); }
+            bool isPng = head[0] == 0x89 && head[1] == 0x50 && head[2] == 0x4E && head[3] == 0x47;
+            int width = (head[16] << 24) | (head[17] << 16) | (head[18] << 8) | head[19];
+            int height = (head[20] << 24) | (head[21] << 16) | (head[22] << 8) | head[23];
+            Check(isPng, "pet: " + anim.File + " is a PNG");
+            Check(width == anim.Ms.Count * 32, "pet: " + anim.File + " is frames x 32 wide (" + width + ")");
+            Check(height == 32, "pet: " + anim.File + " is 32 tall");
+        }
+    }
+
+    private static bool Throws(Action act, out string message)
+    {
+        try { act(); message = ""; return false; }
+        catch (Exception ex) { message = ex.Message; return true; }
+    }
+
+    private static string PetJson(string anims, string frame = "32") =>
+        "{\"frame\":" + frame + ",\"ground\":30,\"hit\":{\"x\":4,\"y\":11,\"w\":24,\"h\":20},\"anims\":{" + anims + "}}";
+
+    private static string PetAnimsJson(string skip = "", string askMs = "100")
+    {
+        var parts = new List<string>();
+        foreach (var n in new[] { "typing", "walk", "done", "ask", "idle" })
+        {
+            if (n == skip) continue;
+            parts.Add("\"" + n + "\":{\"file\":\"" + n + ".png\",\"ms\":[" + (n == "ask" ? askMs : "100,100") + "]}");
+        }
+        return string.Join(",", parts);
+    }
+
+    private static void PetSheetParseErrors()
+    {
+        string msg;
+        Check(!Throws(() => PetSheet.Parse(PetJson(PetAnimsJson())), out msg), "pet parse: a complete sheet parses");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson(skip: "ask"))), out msg) && msg.Contains("ask"),
+            "pet parse: a missing animation throws and names it");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson(askMs: ""))), out msg) && msg.Contains("ask"),
+            "pet parse: empty ms throws and names the animation");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson(askMs: "100,0"))), out msg),
+            "pet parse: a zero frame length throws");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson(askMs: "-5"))), out msg),
+            "pet parse: a negative frame length throws");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson(), frame: "0")), out msg) && msg.Contains("frame"),
+            "pet parse: frame 0 throws");
+        Check(Throws(() => PetSheet.Parse("{ not json"), out msg) && msg.Length > 0, "pet parse: broken JSON throws");
+        Check(Throws(() => PetSheet.Parse("[]"), out msg), "pet parse: a non-object throws");
+        Check(Throws(() => PetSheet.Load(Path.Combine(Path.GetTempPath(), "ctb-no-such-" + Guid.NewGuid().ToString("N") + ".json")), out msg),
+            "pet load: a missing file throws");
+    }
+
+    private static void PetFrameAt()
+    {
+        var a = new PetAnimInfo("t", "t.png", new[] { 100, 50, 200 });
+        Check(a.TotalMs == 350, "frame: TotalMs is the sum of the frame lengths");
+        Check(a.FrameAt(0) == 0, "frame: time 0 is frame 0");
+        Check(a.FrameAt(99.9) == 0, "frame: just before the first edge is still frame 0");
+        Check(a.FrameAt(100) == 1, "frame: exactly on the edge is the next frame");
+        Check(a.FrameAt(149.9) == 1 && a.FrameAt(150) == 2, "frame: second edge");
+        Check(a.FrameAt(349.9) == 2, "frame: last moment of the cycle is the last frame");
+        Check(a.FrameAt(350) == 0, "frame: one full cycle wraps to frame 0");
+        Check(a.FrameAt(450) == 1 && a.FrameAt(350 * 1000 + 160) == 2, "frame: times past one cycle wrap");
+        Check(a.FrameAt(-1) == 0 && a.FrameAt(-1e9) == 0, "frame: negative time is frame 0");
+        Check(a.FrameAt(double.NaN) == 0, "frame: NaN is frame 0");
+        Check(a.FrameAt(double.PositiveInfinity) == 0, "frame: infinity is frame 0");
+    }
+
+    private static SessionInfo Sess(string id, SessionStatus st = SessionStatus.Running) =>
+        new SessionInfo(id) { Status = st };
+
+    private static void PetStageBehaviour()
+    {
+        Check(PetStage.WidthDots == 274, "stage: width is 2*5*26+6+2*4 = 274 dots");
+        Check(PetStage.HomeX(0) == 257 && PetStage.HomeX(1) == 231 && PetStage.HomeX(4) == 153, "stage: seats run right to left");
+        Check(PetStage.FrontX(0) == 121 && PetStage.FrontX(4) == 17, "stage: front spots are 136 dots left of the seats");
+
+        var st = new PetStage();
+        var a = Sess("a");
+        st.Sync(new[] { a });
+        Check(st.Actors.Count == 1 && st.Actors[0].Slot == 0 && st.Actors[0].X == PetStage.HomeX(0),
+            "stage: a new running session sits at seat 0");
+        Check(st.Actors[0].Anim == "typing" && !st.Actors[0].AtFront && !st.Actors[0].FacingLeft,
+            "stage: a running pet types at its seat");
+
+        var b = Sess("b");
+        st.Sync(new[] { a, b });
+        Check(st.Actors.Count == 2 && st.Actors[1].SessionId == "b" && st.Actors[1].Slot == 1 && st.Actors[1].X == PetStage.HomeX(1),
+            "stage: the second session takes seat 1");
+        st.Advance(1000);
+        Check(st.Actors[0].X == PetStage.HomeX(0) && st.Actors[0].Anim == "typing", "stage: a pet that is home does not move");
+
+        // Asking: walks left to the front spot.
+        a.Status = SessionStatus.Asking;
+        st.Sync(new[] { a, b });
+        st.Advance(100);
+        var pa = st.Actors[0];
+        Check(pa.Anim == "walk" && pa.FacingLeft && !pa.AtFront && pa.X < PetStage.HomeX(0) && pa.X > PetStage.FrontX(0),
+            "stage: asking pet walks left (walk, FacingLeft, not at front)");
+        Check(Math.Abs(pa.X - (PetStage.HomeX(0) - 3)) < 1e-9, "stage: walking speed is 30 dots per second");
+        double dist = PetStage.HomeX(0) - PetStage.FrontX(0);
+        st.Advance(dist / PetStage.WalkSpeed * 1000 - 100);
+        Check(pa.X == PetStage.FrontX(0) && pa.Anim == "ask" && pa.AtFront && !pa.FacingLeft,
+            "stage: after distance/speed it stands at the front spot and asks");
+        Check(st.Actors[1].X == PetStage.HomeX(1) && st.Actors[1].Anim == "typing", "stage: other pets stay at their seats");
+
+        // Back to running: walks right to the seat.
+        a.Status = SessionStatus.Running;
+        st.Sync(new[] { a, b });
+        st.Advance(100);
+        Check(pa.Anim == "walk" && !pa.FacingLeft && !pa.AtFront && pa.X > PetStage.FrontX(0),
+            "stage: back to running -> walks right (FacingLeft false)");
+        st.Advance(dist / PetStage.WalkSpeed * 1000 - 100);
+        Check(pa.X == PetStage.HomeX(0) && pa.Anim == "typing" && !pa.AtFront, "stage: back at the seat, typing again");
+
+        // Done: walks out, then jumps for joy.
+        a.Status = SessionStatus.DoneUnseen;
+        st.Sync(new[] { a, b });
+        st.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(pa.X == PetStage.FrontX(0) && pa.Anim == "done" && pa.AtFront, "stage: a finished pet stands at the front and does the done dance");
+
+        // Seen: goes home, idle.
+        a.Status = SessionStatus.DoneSeen;
+        st.Sync(new[] { a, b });
+        st.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(pa.X == PetStage.HomeX(0) && pa.Anim == "idle" && !pa.AtFront, "stage: an acknowledged pet goes home and idles");
+
+        // A huge step never overshoots.
+        a.Status = SessionStatus.Asking;
+        st.Sync(new[] { a, b });
+        st.Advance(1e9);
+        Check(pa.X == PetStage.FrontX(0) && pa.Anim == "ask", "stage: a huge dt stops exactly at the front spot");
+        a.Status = SessionStatus.Running;
+        st.Sync(new[] { a, b });
+        st.Advance(1e9);
+        Check(pa.X == PetStage.HomeX(0) && pa.Anim == "typing", "stage: a huge dt stops exactly at the seat");
+
+        // Bad dt counts as 0.
+        double before = pa.X, animBefore = pa.AnimMs;
+        st.Advance(-50); st.Advance(double.NaN); st.Advance(double.PositiveInfinity);
+        Check(pa.X == before && pa.AnimMs == animBefore, "stage: negative, NaN and infinite dt are treated as 0");
+
+        // Animation clock restarts when the animation changes.
+        var clock = new PetStage();
+        var c = Sess("c");
+        clock.Sync(new[] { c });
+        clock.Advance(50); clock.Advance(70);
+        Check(clock.Actors[0].Anim == "typing" && Math.Abs(clock.Actors[0].AnimMs - 120) < 1e-9, "stage: AnimMs adds up while the animation stays the same");
+        c.Status = SessionStatus.Asking;
+        clock.Sync(new[] { c });
+        clock.Advance(40);
+        Check(clock.Actors[0].Anim == "walk" && clock.Actors[0].AnimMs == 0, "stage: AnimMs goes back to 0 when the animation changes");
+        clock.Advance(40);
+        Check(Math.Abs(clock.Actors[0].AnimMs - 40) < 1e-9, "stage: ... and counts again afterwards");
+
+        // Seats stay put when others leave; the lowest free seat is reused.
+        var s = new PetStage();
+        var p = Sess("p"); var q = Sess("q"); var r = Sess("r");
+        s.Sync(new[] { p, q, r });
+        Check(s.Actors.Count == 3 && s.Actors[2].Slot == 2, "stage: three sessions take seats 0, 1, 2");
+        s.Sync(new[] { q, r });
+        Check(s.Actors.Count == 2 && s.Actors[0].SessionId == "q" && s.Actors[0].Slot == 1 && s.Actors[0].X == PetStage.HomeX(1),
+            "stage: a pet whose neighbour left keeps its seat");
+        Check(s.Actors[1].SessionId == "r" && s.Actors[1].Slot == 2, "stage: the gone session's pet is removed, the rest keep their seats");
+        var t = Sess("t");
+        s.Sync(new[] { q, r, t });
+        Check(s.Actors.Count == 3 && s.Actors[0].SessionId == "t" && s.Actors[0].Slot == 0 && s.Actors[0].X == PetStage.HomeX(0),
+            "stage: a new session takes the lowest free seat (the one that was freed)");
+        s.Sync(new SessionInfo[0]);
+        Check(s.Actors.Count == 0, "stage: no sessions, no pets");
+
+        // Actors come out in seat order whatever order Sync is given.
+        var o = new PetStage();
+        o.Sync(new[] { Sess("x"), Sess("y"), Sess("z") });
+        o.Sync(new[] { Sess("z"), Sess("y"), Sess("x") });
+        Check(o.Actors[0].SessionId == "x" && o.Actors[2].SessionId == "z", "stage: reordering the input does not move pets between seats");
+        Check(o.Actors[0].Slot < o.Actors[1].Slot && o.Actors[1].Slot < o.Actors[2].Slot, "stage: seat numbers go up in the list");
+    }
+
+    private static void ConfigPetScale()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ctb-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "config.json");
+        try
+        {
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: a missing config -> 2");
+            Check(new AppConfig().PetScale == 2, "petScale: the default is 2");
+            File.WriteAllText(path, "{\"port\": 9999}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: missing key -> 2");
+            foreach (var v in new[] { 1, 3, 4, 5, 6 })
+            {
+                File.WriteAllText(path, "{\"petScale\": " + v + "}");
+                Check(AppConfig.Load(path).PetScale == v, "petScale: " + v + " is honored");
+            }
+            File.WriteAllText(path, "{\"petScale\": 0}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: 0 is out of range -> 2");
+            File.WriteAllText(path, "{\"petScale\": 7}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: 7 is out of range -> 2");
+            File.WriteAllText(path, "{\"petScale\": -3}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: negative -> 2");
+            File.WriteAllText(path, "{\"petScale\": 2.5}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: a fraction -> 2");
+            File.WriteAllText(path, "{\"petScale\": \"4\"}");
+            Check(AppConfig.Load(path).PetScale == 2, "petScale: a string -> 2");
+            File.WriteAllText(path, "{\"port\": 9999, \"orcaPath\": \"D:\\\\o\\\\orca.exe\", \"petScale\": 4}");
+            var all = AppConfig.Load(path);
+            Check(all.PetScale == 4 && all.Port == 9999 && all.OrcaPath == @"D:\o\orca.exe",
+                "petScale: port and orcaPath still read alongside it");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
     private static async Task ServerRoundTrip()

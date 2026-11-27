@@ -4,6 +4,8 @@
         Title="claude-task-bar pets"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize"
-        SizeToContent="WidthAndHeight">
-    <StackPanel x:Name="Bar" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="4,0,4,2" />
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <!-- The pets are drawn from code (PetBarWindow.xaml.cs) onto this canvas. -->
+    <Canvas x:Name="Stage" Background="Transparent"
+            UseLayoutRounding="True" SnapsToDevicePixels="True" />
 </Window>

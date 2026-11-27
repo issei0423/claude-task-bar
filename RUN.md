@@ -66,7 +66,7 @@ Claude Code の各フック
        Orca の中のそのタブに切り替える（上限5秒。失敗しても窓は出たまま、
        理由は %TEMP%\ctb.log に1行）
        そのあとペットはバーと台帳から消える（状態・切り替えの成否によらない）
-     ペットの × -> ペットだけ消す（ジャンプしない）
+     ペットを右クリック -> ペットだけ消す（ジャンプしない。v3 で × から右クリックに変えた）
      どちらで消えても、そのセッションの次のイベント（完了・質問待ちなど）でまた出る
   （旧 OverlayWindow のスライドイン通知は呼ばない。完了・質問待ちもペットバーで知らせる）
 ```
@@ -76,7 +76,7 @@ Claude Code の各フック
 `%LOCALAPPDATA%\claude-task-bar\config.json`：
 
 ```json
-{ "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe" }
+{ "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe", "petScale": 3 }
 ```
 
 - `port`：受信ポート。アプリと notify.ps1 の両方が同じファイルを読む。
@@ -86,6 +86,20 @@ Claude Code の各フック
   `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` → PATH の各フォルダの
   `orca.exe` の順で探す（`orca.cmd` は使わない）。見つからなければタブは切り替えず、
   窓を前面化するだけ。設定はアプリの起動時に1回だけ読む。
+- `petScale`（省略可）：ペットの絵の1ドットを画面の何ピクセルで描くか。整数の 1〜6、
+  省略・範囲の外・数でない値は 2。絵は 32×32 ドットなので、2 なら 64×64 ピクセル。
+  大きい画面や高い解像度では 3 や 4 にすると見やすい。
+
+## ペットの絵を作り直したとき
+
+絵の正は `tools/sprites/sprite-book.html`。絵を変えたら、リポジトリ直下で次を回して
+`app/assets/pet`（アニメごとの横1列 PNG と `pet.json`）に書き出し、アプリを入れ直す：
+
+```
+node tools\sprites\export.js
+```
+
+（Node.js が要る。npm のパッケージは要らない。）
 
 ## テスト
 
