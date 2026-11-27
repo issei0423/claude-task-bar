@@ -10,15 +10,31 @@ $ErrorActionPreference = 'SilentlyContinue'
 $sessionId = ''
 $cwd = ''
 $hookEvent = ''
+$raw = ''
 try {
-  $raw = [Console]::In.ReadToEnd()
-  if ($raw) {
+  # Read stdin as UTF-8 bytes. [Console]::In decodes with the console code
+  # page (Shift_JIS on Japanese Windows), which breaks the JSON whenever the
+  # hook input carries Japanese text - and every Stop does (the last reply).
+  # A broken parse lost session_id, so the event was filed under the folder
+  # instead and the same session showed up as a second pet.
+  $stdin = [Console]::OpenStandardInput()
+  $buf = New-Object System.IO.MemoryStream
+  $stdin.CopyTo($buf)
+  $raw = [System.Text.Encoding]::UTF8.GetString($buf.ToArray())
+} catch {}
+if ($raw) {
+  try {
     $hook = $raw | ConvertFrom-Json
     $cwd = $hook.cwd
     $sessionId = $hook.session_id
     $hookEvent = $hook.hook_event_name
-  }
-} catch {}
+  } catch {}
+  # Should the JSON as a whole still not parse, pick the plain fields out of
+  # the text, so the event stays with its own session.
+  if (-not $sessionId -and $raw -match '"session_id"\s*:\s*"([^"\\]+)"') { $sessionId = $Matches[1] }
+  if (-not $hookEvent -and $raw -match '"hook_event_name"\s*:\s*"([A-Za-z]+)"') { $hookEvent = $Matches[1] }
+  if (-not $cwd -and $raw -match '"cwd"\s*:\s*("(?:[^"\\]|\\.)*")') { try { $cwd = $Matches[1] | ConvertFrom-Json } catch {} }
+}
 if (-not $cwd) { $cwd = (Get-Location).Path }
 $source = Split-Path -Leaf $cwd
 if (-not $source) { $source = 'Claude' }
@@ -83,7 +99,10 @@ $body = @{
 
 $sent = $false
 try {
-  Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Method Post -ContentType 'application/json' -Body $body -Uri "http://127.0.0.1:$port/event" | Out-Null
+  # Send bytes: given a string, Windows PowerShell 5.1 encodes the body as
+  # Latin-1, which turns a Japanese folder name into question marks.
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+  Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Method Post -ContentType 'application/json; charset=utf-8' -Body $bytes -Uri "http://127.0.0.1:$port/event" | Out-Null
   $sent = $true
 } catch {}
 if (-not $sent) {
