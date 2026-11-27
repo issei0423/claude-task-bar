@@ -6,6 +6,9 @@
 # -Type is only a fallback for callers that do not pass hook_event_name.
 param([string]$Type = "")
 $ErrorActionPreference = 'SilentlyContinue'
+# When the hook fired (Unix ms). The app compares this, not the arrival time:
+# powershell takes about 3 seconds to get here and to post.
+$ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 $sessionId = ''
 $cwd = ''
@@ -95,6 +98,7 @@ $body = @{
   surface       = $surface
   orca_terminal = $orcaTerminal
   pid           = $claudePid
+  ts            = $ts
 } | ConvertTo-Json -Compress
 
 $sent = $false

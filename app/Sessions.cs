@@ -26,6 +26,14 @@ public sealed class SessionInfo
     /// <summary>Claude's process id (0 = unknown). SessionLiveness watches it to see the session is gone.</summary>
     public int Pid { get; internal set; }
     public SessionStatus Status { get; internal set; } = SessionStatus.Running;
+    /// <summary>
+    /// When the news that set Status happened (the newest news wins). MinValue
+    /// when the only basis is a weak "session started", so any later news,
+    /// e.g. the list's status, can overwrite it.
+    /// </summary>
+    public DateTimeOffset StatusAt { get; internal set; } = DateTimeOffset.MinValue;
+    /// <summary>True once the session has worked (a prompt, a question or a finish was seen).</summary>
+    public bool Worked { get; internal set; }
     public DateTimeOffset StartedAt { get; internal set; }
     public DateTimeOffset LastEventAt { get; internal set; }
 
@@ -77,23 +85,34 @@ public sealed class SessionRegistry
             else
             {
                 _left.Remove(id);
-                if (!_sessions.TryGetValue(id, out var s))
-                {
-                    s = new SessionInfo(id) { StartedAt = now };
-                    _sessions[id] = s;
-                }
+                bool existed = _sessions.TryGetValue(id, out var found);
+                var s = found ?? new SessionInfo(id) { StartedAt = now };
+                if (!existed) _sessions[id] = s;
+                // When it happened: the hook's own clock if it sent one (not more than
+                // 5 seconds ahead of ours), else now.
+                var at = e.At ?? now;
+                if (e.At != null && e.At.Value > now.AddSeconds(5)) at = now;
+                // Older than what we already know: the other fields are still taken,
+                // but the status stays.
+                bool stale = existed && e.At != null && at < s.StatusAt;
                 if (!string.IsNullOrWhiteSpace(e.Source)) s.Source = e.Source;
                 if (!string.IsNullOrWhiteSpace(e.ProjectPath)) s.ProjectPath = e.ProjectPath;
                 if (!string.IsNullOrWhiteSpace(e.Surface)) s.Surface = e.Surface;
                 if (!string.IsNullOrWhiteSpace(e.Hwnd)) s.Hwnd = e.Hwnd;
                 if (!string.IsNullOrWhiteSpace(e.OrcaTerminal)) s.OrcaTerminal = e.OrcaTerminal;
                 if (e.Pid >= 1) s.Pid = e.Pid;
-                s.Status = e.Kind switch
+                if (!stale)
                 {
-                    NotifyEventKind.Done => SessionStatus.DoneUnseen,
-                    NotifyEventKind.Ask => SessionStatus.Asking,
-                    _ => SessionStatus.Running, // Started / Running
-                };
+                    s.Status = e.Kind switch
+                    {
+                        NotifyEventKind.Done => SessionStatus.DoneUnseen,
+                        NotifyEventKind.Ask => SessionStatus.Asking,
+                        _ => SessionStatus.Running, // Started / Running
+                    };
+                    // "Started" is weak evidence of work: leave room for the list to overwrite it.
+                    s.StatusAt = e.Kind == NotifyEventKind.Started ? DateTimeOffset.MinValue : at;
+                    if (e.Kind != NotifyEventKind.Started) s.Worked = true;
+                }
                 s.LastEventAt = now;
                 changed = true;
             }
@@ -122,7 +141,10 @@ public sealed class SessionRegistry
     /// attention, but keep the pet. DoneUnseen -> DoneSeen, Asking -> Running;
     /// Running and DoneSeen stay as they are. Raises Changed only on a change.
     /// </summary>
-    public void Visit(string id)
+    public void Visit(string id) => Visit(id, DateTimeOffset.Now);
+
+    /// <summary>Visit at a given time. A change is news from `now`: older news no longer undoes it.</summary>
+    public void Visit(string id, DateTimeOffset now)
     {
         bool changed = false;
         lock (_lock)
@@ -131,6 +153,7 @@ public sealed class SessionRegistry
             {
                 if (s.Status == SessionStatus.DoneUnseen) { s.Status = SessionStatus.DoneSeen; changed = true; }
                 else if (s.Status == SessionStatus.Asking) { s.Status = SessionStatus.Running; changed = true; }
+                if (changed) s.StatusAt = now;
             }
         }
         if (changed) Changed?.Invoke();
@@ -159,9 +182,10 @@ public sealed class SessionRegistry
     /// <summary>
     /// Fit the ledger to one running session from Claude Code's own list
     /// (~/.claude/sessions). Returns true (and raises Changed) when it changed
-    /// something. Hooks stay in charge of status: an existing session keeps its
-    /// status; a new one starts as Running when the list says "busy" and as
-    /// DoneSeen otherwise.
+    /// something. Status follows the newest news: a new session starts as
+    /// Running (busy/shell), Asking (waiting) or DoneSeen (idle, or not understood);
+    /// an existing one is changed by the list only when the list's
+    /// statusUpdatedAt is later than the news that set its status (see StatusAt).
     /// "Others" are ledger sessions with the same pid but another id (the old id
     /// of a process whose session changed). If any of them had an event more
     /// recent than the list's UpdatedAt, the list is older than what the hooks
@@ -193,13 +217,17 @@ public sealed class SessionRegistry
             if (!_sessions.TryGetValue(e.SessionId, out var cur))
             {
                 var leaf = NotifyEvent.LeafName(e.Cwd);
+                var mapped = LiveSessions.MapStatus(e.Status);
+                bool active = mapped == SessionStatus.Running || mapped == SessionStatus.Asking;
                 _sessions[e.SessionId] = new SessionInfo(e.SessionId)
                 {
                     Source = string.IsNullOrWhiteSpace(leaf) ? "Claude" : leaf,
                     ProjectPath = e.Cwd,
                     Pid = e.Pid,
-                    Status = string.Equals(e.Status, "busy", StringComparison.OrdinalIgnoreCase)
-                        ? SessionStatus.Running : SessionStatus.DoneSeen,
+                    // working -> Running, waiting for the user -> Asking, anything else -> at rest
+                    Status = active ? mapped!.Value : SessionStatus.DoneSeen,
+                    Worked = active,
+                    StatusAt = e.StatusUpdatedAt ?? now,
                     StartedAt = now,
                     LastEventAt = now,
                 };
@@ -212,6 +240,33 @@ public sealed class SessionRegistry
                 {
                     cur.ProjectPath = e.Cwd;
                     changed = true;
+                }
+
+                // The newest news wins: the list's status counts only when it says
+                // something we understand and is newer than what set our status.
+                var m = LiveSessions.MapStatus(e.Status);
+                var t = e.StatusUpdatedAt;
+                if (m != null && t != null && t.Value > cur.StatusAt)
+                {
+                    var before = cur.Status;
+                    switch (m.Value)
+                    {
+                        case SessionStatus.Running:
+                            cur.Status = SessionStatus.Running;
+                            cur.Worked = true;
+                            break;
+                        case SessionStatus.Asking:
+                            cur.Status = SessionStatus.Asking;
+                            cur.Worked = true;
+                            break;
+                        default: // idle
+                            // Working or asking -> finished. A session that never worked just stands quietly.
+                            if (cur.Status == SessionStatus.Running || cur.Status == SessionStatus.Asking)
+                                cur.Status = cur.Worked ? SessionStatus.DoneUnseen : SessionStatus.DoneSeen;
+                            break;
+                    }
+                    cur.StatusAt = t.Value;
+                    if (cur.Status != before) changed = true;
                 }
             }
         }

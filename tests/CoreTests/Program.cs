@@ -62,6 +62,14 @@ public static class Program
         JumpChooseWindow();
         JumpPickTab();
         SetConsoleHwndOverwrites();
+        TsParsing();
+        MapStatusValues();
+        StatusUpdatedAtParsing();
+        ApplyWithTimes();
+        VisitSetsStatusAt();
+        ReconcileNewestWins();
+        ReconcileNewSessions();
+        ReconcileThenStageWalks();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -1134,6 +1142,275 @@ public static class Program
         Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "111", "console hwnd: a later hook event sets its hwnd (as before)");
         r.SetConsoleHwnd("a", "222");
         Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "222", "console hwnd: and the console's window replaces it again");
+    }
+
+    private static void TsParsing()
+    {
+        DateTimeOffset? At(string json) => NotifyEvent.FromJson(json).At;
+        var expected = DateTimeOffset.FromUnixTimeMilliseconds(1795755162578);
+        Check(At("{\"session_id\":\"t\",\"ts\":1795755162578}") == expected, "ts: a number is read as Unix milliseconds");
+        Check(At("{\"session_id\":\"t\",\"ts\":\"1795755162578\"}") == expected, "ts: a string of digits is read");
+        Check(At("{\"session_id\":\"t\"}") == null, "ts: missing -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":-5}") == null, "ts: negative -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":\"abc\"}") == null, "ts: letters -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":\"12abc\"}") == null, "ts: digits with letters -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":1.5}") == null, "ts: a fraction -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":\"\"}") == null, "ts: empty -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":99999999999999999999}") == null, "ts: too big for a long -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":9999999999999999}") == null, "ts: a long that is out of the time range -> null");
+        Check(At("{\"session_id\":\"t\",\"ts\":true}") == null && At("{\"session_id\":\"t\",\"ts\":null}") == null, "ts: boolean / null -> null");
+        Check(NotifyEvent.FromJson("{\"session_id\":\"t\",\"type\":\"done\",\"ts\":1795755162578}").Kind == NotifyEventKind.Done,
+            "ts: the rest of the event is unchanged");
+        Check(NotifyEvent.FromQuery("/done?session_id=t&type=done&ts=1795755162578").At == null, "ts: the legacy GET route does not carry it");
+    }
+
+    private static void MapStatusValues()
+    {
+        Check(LiveSessions.MapStatus("busy") == SessionStatus.Running, "map: busy -> Running");
+        Check(LiveSessions.MapStatus("BUSY") == SessionStatus.Running && LiveSessions.MapStatus("Busy") == SessionStatus.Running, "map: case is ignored");
+        Check(LiveSessions.MapStatus("shell") == SessionStatus.Running, "map: shell -> Running");
+        Check(LiveSessions.MapStatus("waiting") == SessionStatus.Asking, "map: waiting -> Asking");
+        Check(LiveSessions.MapStatus("idle") == SessionStatus.DoneSeen && LiveSessions.MapStatus("IDLE") == SessionStatus.DoneSeen, "map: idle -> DoneSeen (at rest)");
+        Check(LiveSessions.MapStatus("thinking") == null, "map: an unknown value -> null");
+        Check(LiveSessions.MapStatus("") == null && LiveSessions.MapStatus("  ") == null && LiveSessions.MapStatus(null) == null, "map: empty / null -> null");
+    }
+
+    private static void StatusUpdatedAtParsing()
+    {
+        var e = LiveSessions.Parse(RealShape);
+        Check(e != null && e.StatusUpdatedAt == DateTimeOffset.FromUnixTimeMilliseconds(1795755162578), "statusUpdatedAt: read like updatedAt");
+        var none = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\"}");
+        Check(none != null && none.StatusUpdatedAt == null, "statusUpdatedAt: missing -> null");
+        var bad = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\",\"statusUpdatedAt\":\"soon\"}");
+        Check(bad != null && bad.StatusUpdatedAt == null, "statusUpdatedAt: not a number -> null, the entry stays");
+        var range = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\",\"statusUpdatedAt\":99999999999999999}");
+        Check(range != null && range.StatusUpdatedAt == null, "statusUpdatedAt: out of range -> null");
+    }
+
+    private static NotifyEvent EvAt(NotifyEventKind kind, string id, DateTimeOffset? at, string source = "") =>
+        new NotifyEvent { Kind = kind, SessionId = id, Source = source.Length > 0 ? source : id, At = at };
+
+    private static void ApplyWithTimes()
+    {
+        var r = new SessionRegistry();
+        r.Apply(EvAt(NotifyEventKind.Running, "a", T0.AddSeconds(10)), T0.AddSeconds(13));
+        var a = r.Snapshot()[0];
+        Check(a.StatusAt == T0.AddSeconds(10) && a.Status == SessionStatus.Running, "apply+ts: StatusAt is when it happened, not when it arrived");
+        Check(a.LastEventAt == T0.AddSeconds(13), "apply+ts: LastEventAt is still the arrival time");
+
+        // An older event (it took the long way round): other fields update, the status stays.
+        r.Apply(EvAt(NotifyEventKind.Done, "a", T0.AddSeconds(5), source: "renamed"), T0.AddSeconds(14));
+        a = r.Snapshot()[0];
+        Check(a.Status == SessionStatus.Running && a.StatusAt == T0.AddSeconds(10), "apply+ts: an older event does not change Status or StatusAt");
+        Check(a.Source == "renamed" && a.LastEventAt == T0.AddSeconds(14), "apply+ts: ... but its other fields are taken");
+
+        // Newer ts wins.
+        r.Apply(EvAt(NotifyEventKind.Done, "a", T0.AddSeconds(12)), T0.AddSeconds(15));
+        a = r.Snapshot()[0];
+        Check(a.Status == SessionStatus.DoneUnseen && a.StatusAt == T0.AddSeconds(12), "apply+ts: a newer event changes the status");
+
+        // No ts: as before.
+        r.Apply(Ev(NotifyEventKind.Running, "a"), T0.AddSeconds(20));
+        a = r.Snapshot()[0];
+        Check(a.Status == SessionStatus.Running && a.StatusAt == T0.AddSeconds(20), "apply+ts: an event without ts always changes the status, at the arrival time");
+        r.Apply(Ev(NotifyEventKind.Done, "a"), T0.AddSeconds(21));
+        Check(r.Snapshot()[0].Status == SessionStatus.DoneUnseen, "apply+ts: ... again");
+
+        // Started is weak: StatusAt is MinValue, and it is not 'worked'.
+        var s = new SessionRegistry();
+        s.Apply(EvAt(NotifyEventKind.Started, "s", T0), T0);
+        var si = s.Snapshot()[0];
+        Check(si.StatusAt == DateTimeOffset.MinValue && !si.Worked && si.Status == SessionStatus.Running, "apply+ts: Started -> StatusAt MinValue, not worked");
+        foreach (var kind in new[] { NotifyEventKind.Running, NotifyEventKind.Ask, NotifyEventKind.Done })
+        {
+            var w = new SessionRegistry();
+            w.Apply(EvAt(NotifyEventKind.Started, "w", T0), T0);
+            w.Apply(EvAt(kind, "w", T0.AddSeconds(1)), T0.AddSeconds(2));
+            Check(w.Snapshot()[0].Worked && w.Snapshot()[0].StatusAt == T0.AddSeconds(1), "apply+ts: " + kind + " marks the session as worked");
+        }
+
+        // A ts too far ahead (more than 5 seconds) is replaced by 'now'; a small lead is kept.
+        var f = new SessionRegistry();
+        f.Apply(EvAt(NotifyEventKind.Running, "f", T0.AddHours(1)), T0);
+        Check(f.Snapshot()[0].StatusAt == T0, "apply+ts: a ts more than 5 seconds ahead uses 'now'");
+        var g = new SessionRegistry();
+        g.Apply(EvAt(NotifyEventKind.Running, "g", T0.AddSeconds(3)), T0);
+        Check(g.Snapshot()[0].StatusAt == T0.AddSeconds(3), "apply+ts: a ts 3 seconds ahead is kept");
+
+        // After a Started event (StatusAt MinValue) any older-looking real event still lands.
+        var h = new SessionRegistry();
+        h.Apply(EvAt(NotifyEventKind.Started, "h", T0.AddSeconds(50)), T0.AddSeconds(50));
+        h.Apply(EvAt(NotifyEventKind.Done, "h", T0.AddSeconds(40)), T0.AddSeconds(51));
+        Check(h.Snapshot()[0].Status == SessionStatus.DoneUnseen, "apply+ts: nothing is older than a Started event's MinValue");
+    }
+
+    private static void VisitSetsStatusAt()
+    {
+        var r = new SessionRegistry();
+        r.Apply(EvAt(NotifyEventKind.Done, "d", T0.AddSeconds(10)), T0.AddSeconds(13));
+        r.Visit("d", T0.AddSeconds(20));
+        var d = r.Snapshot()[0];
+        Check(d.Status == SessionStatus.DoneSeen && d.StatusAt == T0.AddSeconds(20), "visit+ts: a visit that changes the status sets StatusAt");
+        // A done notice from before the click arrives late: the pet must not come back out.
+        r.Apply(EvAt(NotifyEventKind.Done, "d", T0.AddSeconds(15)), T0.AddSeconds(25));
+        Check(r.Snapshot()[0].Status == SessionStatus.DoneSeen, "visit+ts: an older done notice does not bring the pet out again");
+        r.Apply(EvAt(NotifyEventKind.Done, "d", T0.AddSeconds(30)), T0.AddSeconds(33));
+        Check(r.Snapshot()[0].Status == SessionStatus.DoneUnseen, "visit+ts: a done notice from after the click does");
+
+        var q = new SessionRegistry();
+        q.Apply(EvAt(NotifyEventKind.Ask, "q", T0.AddSeconds(10)), T0.AddSeconds(11));
+        q.Visit("q", T0.AddSeconds(20));
+        q.Apply(EvAt(NotifyEventKind.Ask, "q", T0.AddSeconds(12)), T0.AddSeconds(22));
+        Check(q.Snapshot()[0].Status == SessionStatus.Running, "visit+ts: an older ask notice does not bring the question back");
+
+        var n = new SessionRegistry();
+        n.Apply(EvAt(NotifyEventKind.Running, "n", T0.AddSeconds(10)), T0.AddSeconds(11));
+        n.Visit("n", T0.AddSeconds(50));
+        Check(n.Snapshot()[0].StatusAt == T0.AddSeconds(10), "visit+ts: a visit that changes nothing does not touch StatusAt");
+
+        var plain = new SessionRegistry();
+        plain.Apply(Ev(NotifyEventKind.Done, "p"), T0);
+        var before = DateTimeOffset.Now;
+        plain.Visit("p");
+        Check(plain.Snapshot()[0].StatusAt >= before, "visit+ts: Visit(id) uses the current time");
+    }
+
+    private static LiveSessionEntry LiveE(string id, int pid, string status, DateTimeOffset? statusAt, string cwd = @"C:\x\proj") =>
+        new LiveSessionEntry { Pid = pid, SessionId = id, Cwd = cwd, Kind = "interactive", Status = status, StatusUpdatedAt = statusAt };
+
+    private static SessionRegistry Hooked(string id, NotifyEventKind kind, DateTimeOffset at, int pid = 40)
+    {
+        var r = new SessionRegistry();
+        r.Apply(new NotifyEvent { Kind = kind, SessionId = id, Pid = pid, ProjectPath = @"C:\x\proj", At = at }, at);
+        return r;
+    }
+
+    private static void ReconcileNewestWins()
+    {
+        // asking (hook) -> the list says busy, newer -> working again
+        var r = Hooked("a", NotifyEventKind.Ask, T0);
+        int changes = 0;
+        r.Changed += () => changes++;
+        Check(r.Reconcile(LiveE("a", 40, "busy", T0.AddSeconds(5)), T0.AddSeconds(6)), "newest: a newer busy changes an asking session");
+        var a = r.Snapshot()[0];
+        Check(a.Status == SessionStatus.Running && a.Worked && a.StatusAt == T0.AddSeconds(5), "newest: asking -> Running, StatusAt follows the list");
+        Check(changes == 1, "newest: Changed once");
+        Check(!r.Reconcile(LiveE("a", 40, "busy", T0.AddSeconds(5)), T0.AddSeconds(7)) && changes == 1, "newest: the same list state again changes nothing");
+
+        // working -> waiting -> asking
+        var w = Hooked("w", NotifyEventKind.Running, T0);
+        Check(w.Reconcile(LiveE("w", 40, "waiting", T0.AddSeconds(5)), T0.AddSeconds(6)) && w.Snapshot()[0].Status == SessionStatus.Asking,
+            "newest: a newer waiting turns a working session into asking");
+        var sh = Hooked("sh", NotifyEventKind.Ask, T0);
+        sh.Reconcile(LiveE("sh", 40, "shell", T0.AddSeconds(5)), T0.AddSeconds(6));
+        Check(sh.Snapshot()[0].Status == SessionStatus.Running, "newest: shell counts as working");
+
+        // working (worked) -> idle -> finished, not yet seen
+        var d = Hooked("d", NotifyEventKind.Running, T0);
+        Check(d.Reconcile(LiveE("d", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6)) && d.Snapshot()[0].Status == SessionStatus.DoneUnseen,
+            "newest: a worked session that goes idle -> DoneUnseen");
+        var dq = Hooked("dq", NotifyEventKind.Ask, T0);
+        dq.Reconcile(LiveE("dq", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6));
+        Check(dq.Snapshot()[0].Status == SessionStatus.DoneUnseen, "newest: an asking session that goes idle -> DoneUnseen");
+
+        // started only (never worked) -> idle -> quietly at rest
+        var s = Hooked("s", NotifyEventKind.Started, T0);
+        Check(!s.Snapshot()[0].Worked, "newest: a Started-only session has not worked");
+        Check(s.Reconcile(LiveE("s", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6)) && s.Snapshot()[0].Status == SessionStatus.DoneSeen,
+            "newest: a session that never worked and goes idle just stands (DoneSeen), no 'finished' call");
+
+        // finished (unseen) -> idle: nothing
+        var u = Hooked("u", NotifyEventKind.Done, T0);
+        Check(!u.Reconcile(LiveE("u", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6)) && u.Snapshot()[0].Status == SessionStatus.DoneUnseen,
+            "newest: DoneUnseen + idle stays DoneUnseen");
+        var sn = Hooked("sn", NotifyEventKind.Done, T0);
+        sn.Visit("sn", T0.AddSeconds(1));
+        Check(!sn.Reconcile(LiveE("sn", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6)) && sn.Snapshot()[0].Status == SessionStatus.DoneSeen,
+            "newest: DoneSeen + idle stays DoneSeen");
+
+        // not newer: nothing
+        var e = Hooked("e", NotifyEventKind.Running, T0.AddSeconds(10));
+        Check(!e.Reconcile(LiveE("e", 40, "waiting", T0.AddSeconds(10)), T0.AddSeconds(11)) && e.Snapshot()[0].Status == SessionStatus.Running,
+            "newest: a list time equal to StatusAt changes nothing");
+        Check(!e.Reconcile(LiveE("e", 40, "waiting", T0.AddSeconds(5)), T0.AddSeconds(12)) && e.Snapshot()[0].Status == SessionStatus.Running,
+            "newest: an older list time changes nothing");
+        Check(!e.Reconcile(LiveE("e", 40, "waiting", null), T0.AddSeconds(13)) && e.Snapshot()[0].Status == SessionStatus.Running,
+            "newest: no statusUpdatedAt -> nothing");
+        Check(!e.Reconcile(LiveE("e", 40, "thinking", T0.AddSeconds(20)), T0.AddSeconds(14)) && e.Snapshot()[0].Status == SessionStatus.Running,
+            "newest: an unknown status -> nothing");
+        Check(!e.Reconcile(LiveE("e", 40, "", T0.AddSeconds(20)), T0.AddSeconds(15)) && e.Snapshot()[0].Status == SessionStatus.Running,
+            "newest: an empty status -> nothing");
+        Check(e.Snapshot()[0].StatusAt == T0.AddSeconds(10), "newest: ... and StatusAt is untouched in those cases");
+
+        // A list state equal to the current status still moves StatusAt, so an older hook cannot undo it.
+        var m = Hooked("m", NotifyEventKind.Running, T0.AddSeconds(1));
+        Check(!m.Reconcile(LiveE("m", 40, "busy", T0.AddSeconds(5)), T0.AddSeconds(6)), "newest: busy over Running changes no status (false)");
+        m.Apply(EvAt(NotifyEventKind.Done, "m", T0.AddSeconds(3)), T0.AddSeconds(7));
+        Check(m.Snapshot()[0].Status == SessionStatus.Running, "newest: ... but an older hook then no longer overrides it");
+
+        // The hook that comes after the list's idle (its ts is later) still lands.
+        var l = Hooked("l", NotifyEventKind.Running, T0);
+        l.Reconcile(LiveE("l", 40, "idle", T0.AddSeconds(5)), T0.AddSeconds(6));
+        l.Apply(EvAt(NotifyEventKind.Done, "l", T0.AddSeconds(6)), T0.AddSeconds(9));
+        Check(l.Snapshot()[0].Status == SessionStatus.DoneUnseen, "newest: the Stop hook after the list's idle keeps it DoneUnseen");
+    }
+
+    private static void ReconcileNewSessions()
+    {
+        var r = new SessionRegistry();
+        r.Reconcile(LiveE("b", 1, "busy", T0.AddSeconds(5)), T0.AddSeconds(9));
+        r.Reconcile(LiveE("w", 2, "waiting", T0.AddSeconds(6)), T0.AddSeconds(9));
+        r.Reconcile(LiveE("i", 3, "idle", T0.AddSeconds(7)), T0.AddSeconds(9));
+        r.Reconcile(LiveE("n", 4, "idle", null), T0.AddSeconds(9));
+        var snap = r.Snapshot();
+        var b = snap.First(s => s.Id == "b"); var w = snap.First(s => s.Id == "w");
+        var i = snap.First(s => s.Id == "i"); var n = snap.First(s => s.Id == "n");
+        Check(b.Status == SessionStatus.Running && b.Worked && b.StatusAt == T0.AddSeconds(5), "new: busy -> Running, worked, StatusAt from the list");
+        Check(w.Status == SessionStatus.Asking && w.Worked && w.StatusAt == T0.AddSeconds(6), "new: waiting -> Asking, worked");
+        Check(i.Status == SessionStatus.DoneSeen && !i.Worked && i.StatusAt == T0.AddSeconds(7), "new: idle -> DoneSeen, not worked");
+        Check(n.StatusAt == T0.AddSeconds(9), "new: no statusUpdatedAt -> StatusAt is now");
+
+        // A session that has not worked goes busy, then idle: it worked, so DoneUnseen.
+        r.Reconcile(LiveE("i", 3, "busy", T0.AddSeconds(20)), T0.AddSeconds(21));
+        Check(r.Snapshot().First(s => s.Id == "i").Status == SessionStatus.Running, "new: a resting session that starts working shows as Running");
+        r.Reconcile(LiveE("i", 3, "idle", T0.AddSeconds(30)), T0.AddSeconds(31));
+        Check(r.Snapshot().First(s => s.Id == "i").Status == SessionStatus.DoneUnseen, "new: ... and when it rests again, DoneUnseen");
+    }
+
+    private static void ReconcileThenStageWalks()
+    {
+        double dist = PetStage.HomeX(0) - PetStage.FrontX(0);
+
+        // asking (hook) -> list busy: the pet walks back and types
+        var r = Hooked("a", NotifyEventKind.Ask, T0);
+        var stage = new PetStage();
+        void Sync() => stage.Sync(PetSelection.Select(r.Snapshot()).Displayed);
+        Sync();
+        stage.Advance(1e9);
+        var a = stage.Actors[0];
+        Check(a.AtFront && a.Anim == "ask", "list+stage: the asking pet is out in front");
+        r.Reconcile(LiveE("a", 40, "busy", T0.AddSeconds(5)), T0.AddSeconds(6));
+        Sync();
+        stage.Advance(100);
+        Check(a.Anim == "walk" && !a.FacingLeft, "list+stage: after the list says busy it walks back");
+        stage.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(a.X == PetStage.HomeX(0) && a.Anim == "typing", "list+stage: and sits typing");
+
+        // working -> list waiting: the pet walks out and asks
+        r.Reconcile(LiveE("a", 40, "waiting", T0.AddSeconds(10)), T0.AddSeconds(11));
+        Sync();
+        stage.Advance(100);
+        Check(a.Anim == "walk" && a.FacingLeft, "list+stage: after the list says waiting it walks out");
+        stage.Advance(dist / PetStage.WalkSpeed * 1000);
+        Check(a.X == PetStage.FrontX(0) && a.Anim == "ask" && a.AtFront, "list+stage: and asks");
+
+        // a discovered idle session just stands at its seat
+        var r2 = new SessionRegistry();
+        r2.Reconcile(LiveE("i", 5, "idle", T0), T0);
+        var stage2 = new PetStage();
+        stage2.Sync(PetSelection.Select(r2.Snapshot()).Displayed);
+        stage2.Advance(1e9);
+        Check(stage2.Actors[0].Anim == "idle" && stage2.Actors[0].X == PetStage.HomeX(0), "list+stage: a new idle session stands at its seat");
     }
 
     private static async Task ServerRoundTrip()
