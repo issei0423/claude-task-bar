@@ -104,8 +104,8 @@ canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
 
 <div class="wrap" id="app" data-bg="dark">
   <header>
-    <h1>ドット絵 見本帳 <span class="ver">v0.2 生まれる・消えるの案</span></h1>
-    <p>四角い子を 32×32 ドットで描き起こした最初の下描きです。直したい所は「絵柄」「アニメの名前」「コマ番号」で言ってください（例：B の「歩く」3コマ目、足をもっと上げる）。</p>
+    <h1>ドット絵 見本帳 <span class="ver">v0.3 下描き</span></h1>
+    <p>v0.3 で足したもの：<b>歩く（左）</b>（#4 光の向きを右向きと同じに）、<b>逃げる</b>・<b>逃げる（左）</b>（#11 使用量 90% 超え）。v0.2 の「生まれる・消える」の案（#12）は下にそのまま残しています。直したい所は「アニメの名前」「コマ番号」で言ってください（例：「逃げる」2コマ目、汗をもっと大きく）。</p>
   </header>
 
   <div class="controls" role="group" aria-label="見え方の切り替え">
@@ -146,11 +146,13 @@ canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
       <li><b>右</b>　実行中。ノートPCで作業し続ける</li>
       <li><b>中</b>　完了。歩いて出てきて跳ね、しばらくして戻る</li>
       <li><b>左</b>　質問待ち。歩いて出てきて手を振り、しばらくして戻る</li>
+      <li><b>使用量 90% 超え</b>（下のボタン）　作業中のペットが席を離れて走り回る。完了・質問待ちの知らせはそのまま出る（#11）</li>
     </ul>
+    <div class="row"><button type="button" class="btn" id="flee" aria-pressed="false">使用量 90% 超えにする</button></div>
   </section>
 
   <section aria-labelledby="h-anims">
-    <h2 id="h-anims">アニメーション（5つ）</h2>
+    <h2 id="h-anims">アニメーション（8つ）</h2>
     <div class="cards" id="cards"></div>
   </section>
 
@@ -209,7 +211,10 @@ const SPR = (() => {
     p: ['#EFE9DF', '煙（案）'],
     P: ['#B8AEA2', '煙の影（案）'],
     u: ['#8A5A3A', '土（案）'],
+    a: ['#7CC8F0', '汗'],
+    A: ['#E2F5FF', '汗の光'],
   };
+
   const base = { BW: 18, BH: 14, LH: 4, eyeW: 2, eyeH: 4, eyeInset: 3, eyeTop: 3, sitBob: 2 };
   const STYLES = {
     A: Object.assign({}, base, { name: '今の絵に忠実', outline: 'C', nb: 8, shade: false, shine: false,
@@ -227,7 +232,8 @@ const SPR = (() => {
       mark: null, markDy: 0, sparks: 0,
       // 生まれる・消える（案）で使う：hide＝体を描かない、blob＝体の代わりに丸、sil＝光の形、
       // dissolve＝上から崩れる割合、clip＝この行から下を消す、hole＝地面の穴、puff＝煙の段、parts＝粒
-      hide: false, blob: null, sil: false, dissolve: 0, clip: null, hole: false, puff: 0, parts: null }, pose);
+      hide: false, blob: null, sil: false, dissolve: 0, clip: null, hole: false, puff: 0, parts: null,
+      sweat: null, sweatSide: -1 }, pose);
     const main = new Array(W * H).fill(null), fx = new Array(W * H).fill(null);
     const set = (g, x, y, c) => { if (x >= 0 && x < W && y >= 0 && y < H) g[y * W + x] = c; };
     const rect = (g, x, y, w, h, c) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) set(g, x + i, y + j, c); };
@@ -302,6 +308,11 @@ const SPR = (() => {
         const m = eyeY + 1;
         if (S.eyeW === 2) { set(main, ex - 1, m + 1, 'e'); set(main, ex, m, 'e'); set(main, ex + 1, m, 'e'); set(main, ex + 2, m + 1, 'e'); }
         else { set(main, ex - 1, m + 2, 'e'); set(main, ex, m + 1, 'e'); set(main, ex + 1, m, 'e'); set(main, ex + 2, m + 1, 'e'); set(main, ex + 3, m + 2, 'e'); }
+      } else if (p.eyes === 'wide') {
+        // 見開いた目：1ドット高く、光を2つ
+        rect(main, ex, eyeY - 1, S.eyeW, S.eyeH + 1, 'e');
+        set(main, ex, eyeY - 1, 'w');
+        if (S.shine) set(main, ex + S.eyeW - 1, eyeY + S.eyeH - 2, 'w');
       } else if (p.eyes === 'down') {
         rect(main, ex, eyeY + 2, S.eyeW, S.eyeH - 2, 'e');
       } else {
@@ -327,6 +338,16 @@ const SPR = (() => {
         const idx = (((li - k) % 4) + 4) % 4;
         const len = k === 0 ? Math.ceil(LEN[idx] * (grow + 1) / 3) : LEN[idx];
         rect(fx, 12 + IND[idx] + p.x, bodyTop - 3 - k * 2, len, 1, k === 0 ? 'g' : k === 1 ? 'G' : 'd');
+      }
+    }
+    // 汗（進む向きの後ろへ飛ぶ。2粒を2コマずらす）
+    if (p.sweat != null) {
+      const side = p.sweatSide, hx = side < 0 ? BX - 5 : BX + BW + 4;
+      const PATH = [[0, 0], [1, -2], [2, -3], [2, -1]];
+      for (let n = 0; n < 2; n++) {
+        const [dx, dy] = PATH[(p.sweat + n * 2) % 4];
+        const sx = hx + side * dx, sy = bodyTop + 2 + n * 4 + dy;
+        set(fx, sx, sy, 'A'); set(fx, sx, sy + 1, 'a');
       }
     }
     } // 体ここまで
@@ -400,6 +421,19 @@ const SPR = (() => {
     return out;
   }
 
+  // 形だけ左右を逆にする（塗りは反転しない）。明るい面・影・目の光は右向きと同じ側に残る
+  function mirrorPose(p) {
+    const q = Object.assign({}, p);
+    if (p.x) q.x = -p.x;
+    if (p.eyeDx) q.eyeDx = -p.eyeDx;
+    if (p.legs) q.legs = p.legs.slice().reverse().map(L => Array.isArray(L) ? [-L[0], L[1]] : L);
+    q.armL = p.armR; q.armR = p.armL;
+    q.sweatSide = -(p.sweatSide == null ? -1 : p.sweatSide);
+    return q;
+  }
+  const mirrored = (src, extra) => Object.assign({}, src, extra, { frames: src.frames.map(f => ({ ms: f.ms, p: mirrorPose(f.p) })) });
+
+
   const up = (hand = 0) => ({ up: true, hand });
   const ANIMS = [
     { id: 'typing', name: '作業', when: '実行中。その場でノートPCを叩く',
@@ -442,6 +476,24 @@ const SPR = (() => {
         { ms: 420, p: { bob: 1 } }, { ms: 90, p: { bob: 1, eyes: 'blink' } }, { ms: 160, p: { bob: 1 } },
       ] },
   ];
+
+  // #4 左へ歩く：形だけ逆にした「歩く」。光は左上、影は右下のまま
+  const walk = ANIMS.find(a => a.id === 'walk');
+  ANIMS.splice(ANIMS.indexOf(walk) + 1, 0, mirrored(walk, { id: 'walkL', name: '歩く（左）',
+    when: '左へ歩くとき。絵を反転せず、この絵を出す',
+    note: '「歩く」の足・腕・目の寄せだけを左右逆にしました。明るい面・影・目の光は右向きと同じ側（左上が明るい）。' }));
+
+  // #11 逃げる：5時間枠が 90% を超えたとき、席を離れて走り回る
+  const run = { id: 'run', name: '逃げる', when: '使用量（5時間枠）が 90% を超えたとき、走り回る',
+    note: '足を2本ずつ高く上げて前へ蹴り出す走り。1コマ 70ms。目を見開き、腕を交互に振り上げ、後ろへ汗を2粒飛ばします。2・4コマ目は4本とも浮いています。',
+    frames: [
+      { ms: 70, p: { bob: 1, legs: [[-1, 0], [2, 3], [-1, 0], [2, 3]], eyes: 'wide', eyeDx: 1, armL: up(1), armR: { dy: 1 }, sweat: 0 } },
+      { ms: 70, p: { y: -1, legs: [[0, 1], [0, 1], [0, 1], [0, 1]], eyes: 'wide', eyeDx: 1, armL: { dy: -1 }, armR: up(0), sweat: 1 } },
+      { ms: 70, p: { bob: 1, legs: [[2, 3], [-1, 0], [2, 3], [-1, 0]], eyes: 'wide', eyeDx: 1, armL: { dy: 1 }, armR: up(1), sweat: 2 } },
+      { ms: 70, p: { y: -1, legs: [[0, 1], [0, 1], [0, 1], [0, 1]], eyes: 'wide', eyeDx: 1, armL: up(0), armR: { dy: -1 }, sweat: 3 } },
+    ] };
+  ANIMS.push(run, mirrored(run, { id: 'runL', name: '逃げる（左）', when: '左へ逃げるとき',
+    note: '「逃げる」の形だけを左右逆にしました（#4 と同じ作り。光の向きは変えない）。汗は右後ろへ飛びます。' }));
 
   // ── 生まれる・消える（案）。持ち主が選ぶまでアプリへは書き出さない（export.js は ANIMS だけを読む） ──
   const DIRS = [[0, -1], [0.7, -0.7], [1, 0], [0.7, 0.7], [0, 1], [-0.7, 0.7], [-1, 0], [-0.7, -0.7]];
@@ -548,19 +600,21 @@ if (typeof module !== 'undefined') module.exports = SPR;
   const $ = id => document.getElementById(id);
   const app = $('app');
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const state = { style: 'A', bg: 'dark', real: 2, anim: 'typing', speed: 1, playing: !reduce, frame: 0, grid: true, flip: false };
+  const state = { style: 'B', bg: 'dark', real: 2, anim: 'typing', speed: 1, playing: !reduce, frame: 0, grid: true, flip: false };
   try {
-    const saved = JSON.parse(localStorage.getItem('spritebook.v1') || 'null');
+    const saved = JSON.parse(localStorage.getItem('spritebook.v2') || 'null');
     if (saved) for (const k of ['style', 'bg', 'real', 'anim']) if (saved[k] != null) state[k] = saved[k];
-    if (!SPR.STYLES[state.style]) state.style = 'A';
+    if (!SPR.STYLES[state.style]) state.style = 'B';
     if (!SPR.byId[state.anim]) state.anim = 'typing';
   } catch (e) {}
-  const save = () => { try { localStorage.setItem('spritebook.v1', JSON.stringify({ style: state.style, bg: state.bg, real: state.real, anim: state.anim })); } catch (e) {} };
+  const save = () => { try { localStorage.setItem('spritebook.v2', JSON.stringify({ style: state.style, bg: state.bg, real: state.real, anim: state.anim })); } catch (e) {} };
 
   const RGB = {};
   for (const k in SPR.PAL) { const h = SPR.PAL[k][0]; RGB[k] = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
   const fcache = new Map();
+  // 左向き：左向きの絵（〜L）があればそれを出す。無いものだけ鏡に映す
   function frameCanvas(style, animId, i, flip) {
+    if (flip && SPR.byId[animId + 'L']) { animId = animId + 'L'; flip = false; }
     const key = style + '|' + animId + '|' + i + '|' + (flip ? 1 : 0);
     let c = fcache.get(key);
     if (c) return c;
@@ -678,6 +732,9 @@ if (typeof module !== 'undefined') module.exports = SPR;
     { home: 0.72, to: 0.50, kind: 'done', st: 'typing', t: 2600, at: 300, x: null, dir: -1 },
     { home: 0.56, to: 0.30, kind: 'ask', st: 'typing', t: 0, at: 700, x: null, dir: -1 },
   ];
+  const fleeBtn = $('flee');
+  let flee = false;
+  fleeBtn.addEventListener('click', () => { flee = !flee; fleeBtn.setAttribute('aria-pressed', String(flee)); fleeBtn.textContent = flee ? '使用量を戻す' : '使用量 90% 超えにする'; });
   const SAY = { done: '終わったよー！', ask: '聞きたいことがある！' };
   function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r); ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r); ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r); ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath(); }
   function drawStage(dt) {
@@ -708,13 +765,28 @@ if (typeof module !== 'undefined') module.exports = SPR;
       const home = p.home * Wd, to = p.to * Wd;
       if (p.x == null) p.x = home;
       p.t += dt; p.at += dt;
+      // 逃げる：作業中のペットだけが走る（完了・質問待ちの知らせはそのまま）
+      const busy = p.st === 'typing' || p.st === 'run';
+      if (flee && busy && !p.fleeing) { p.fleeing = true; p.st = 'run'; p.dir = -1; p.at = 0; }
+      if (p.fleeing) {
+        const vr = 110 * d / 1000, lo = 20 * d, hi = Wd - 120 * d;
+        if (flee) {
+          p.x += p.dir * vr * dt;
+          if (p.x <= lo) { p.x = lo; p.dir = 1; } else if (p.x >= hi) { p.x = hi; p.dir = -1; }
+        } else {
+          const g = home - p.x;
+          if (Math.abs(g) <= v * dt) { p.x = home; p.fleeing = false; p.st = 'typing'; p.t = 0; p.at = 0; }
+          else { p.dir = Math.sign(g); p.x += p.dir * v * dt; }
+        }
+      }
       if (p.st === 'typing') { if (p.kind !== 'stay' && p.t > 5200) { p.st = 'go'; p.t = 0; p.dir = Math.sign(to - home) || -1; } }
       else if (p.st === 'go') { p.x += p.dir * v * dt; if ((p.dir < 0 && p.x <= to) || (p.dir > 0 && p.x >= to)) { p.x = to; p.st = p.kind; p.t = 0; p.at = 0; } }
       else if (p.st === 'done' || p.st === 'ask') { if (p.t > 4600) { p.st = 'back'; p.t = 0; p.dir = Math.sign(home - to) || 1; } }
-      else if (p.st === 'back') { p.x += p.dir * v * dt; if ((p.dir < 0 && p.x <= home) || (p.dir > 0 && p.x >= home)) { p.x = home; p.st = 'typing'; p.t = 0; } }
-      const id = (p.st === 'go' || p.st === 'back') ? 'walk' : p.st;
+      else if (p.st === 'back' && !p.fleeing) { p.x += p.dir * v * dt; if ((p.dir < 0 && p.x <= home) || (p.dir > 0 && p.x >= home)) { p.x = home; p.st = 'typing'; p.t = 0; } }
+      let id = p.fleeing ? (flee ? 'run' : 'walk') : (p.st === 'go' || p.st === 'back') ? 'walk' : p.st;
+      if ((id === 'walk' || id === 'run') && p.dir < 0) id += 'L';   // 反転せず、左向きの絵を出す
       const a = SPR.byId[id], fi = frameAt(a, p.at);
-      const src = frameCanvas(state.style, id, fi, id === 'walk' && p.dir < 0);
+      const src = frameCanvas(state.style, id, fi, false);
       const px = Math.round(p.x - 16 * k), py = top - 31 * k;
       ctx.drawImage(src, px, py, 32 * k, 32 * k);
       if (SAY[p.st]) {
