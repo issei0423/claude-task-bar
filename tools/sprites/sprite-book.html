@@ -104,7 +104,7 @@ canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
 
 <div class="wrap" id="app" data-bg="dark">
   <header>
-    <h1>ドット絵 見本帳 <span class="ver">v0.1 下描き</span></h1>
+    <h1>ドット絵 見本帳 <span class="ver">v0.2 生まれる・消えるの案</span></h1>
     <p>四角い子を 32×32 ドットで描き起こした最初の下描きです。直したい所は「絵柄」「アニメの名前」「コマ番号」で言ってください（例：B の「歩く」3コマ目、足をもっと上げる）。</p>
   </header>
 
@@ -154,6 +154,12 @@ canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
     <div class="cards" id="cards"></div>
   </section>
 
+  <section aria-labelledby="h-drafts">
+    <h2 id="h-drafts">生まれる・消える（案・Issue #12）</h2>
+    <p class="muted">セッションが始まったときと終わったときの案です。まだアプリには入れていません。どれにするか、組み合わせ・直したいコマを言ってください。押すと下のコマ送りで1コマずつ見られます。</p>
+    <div class="cards" id="drafts"></div>
+  </section>
+
   <section aria-labelledby="h-detail">
     <h2 id="h-detail">コマ送り</h2>
     <div class="detail">
@@ -200,6 +206,9 @@ const SPR = (() => {
     d: ['#1E6E4E', 'コードの行（古い）'],
     y: ['#FFC857', '？ときらめき'],
     Y: ['#FFF1C2', 'きらめきの芯'],
+    p: ['#EFE9DF', '煙（案）'],
+    P: ['#B8AEA2', '煙の影（案）'],
+    u: ['#8A5A3A', '土（案）'],
   };
   const base = { BW: 18, BH: 14, LH: 4, eyeW: 2, eyeH: 4, eyeInset: 3, eyeTop: 3, sitBob: 2 };
   const STYLES = {
@@ -215,10 +224,21 @@ const SPR = (() => {
   function draw(S, pose) {
     const p = Object.assign({ x: 0, y: 0, bob: 0, wide: 0, tall: 0, legs: null, armL: null, armR: null,
       eyes: 'open', eyeDx: 0, sit: false, laptop: false, glow: false, code: null,
-      mark: null, markDy: 0, sparks: 0 }, pose);
+      mark: null, markDy: 0, sparks: 0,
+      // 生まれる・消える（案）で使う：hide＝体を描かない、blob＝体の代わりに丸、sil＝光の形、
+      // dissolve＝上から崩れる割合、clip＝この行から下を消す、hole＝地面の穴、puff＝煙の段、parts＝粒
+      hide: false, blob: null, sil: false, dissolve: 0, clip: null, hole: false, puff: 0, parts: null }, pose);
     const main = new Array(W * H).fill(null), fx = new Array(W * H).fill(null);
     const set = (g, x, y, c) => { if (x >= 0 && x < W && y >= 0 && y < H) g[y * W + x] = c; };
     const rect = (g, x, y, w, h, c) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) set(g, x + i, y + j, c); };
+    const disc = (g, cx, cy, r, c) => { for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) if (i * i + j * j <= r * r + r) set(g, cx + i, cy + j, c); };
+
+    if (p.blob != null) {
+      const cy = GROUND - 1 - p.blob + p.y;
+      disc(main, 16, cy, p.blob, 'o');
+      if (S.shade && p.blob >= 2) { set(main, 16 - 1, cy - p.blob + 1, 'h'); set(main, 16, cy - p.blob, 'h'); }
+    }
+    if (!p.hide && p.blob == null) {
 
     const bob = p.sit ? S.sitBob : p.bob;
     const BX0 = (W - S.BW) / 2 + p.x;          // 体の左端（つぶれる前）
@@ -309,6 +329,7 @@ const SPR = (() => {
         rect(fx, 12 + IND[idx] + p.x, bodyTop - 3 - k * 2, len, 1, k === 0 ? 'g' : k === 1 ? 'G' : 'd');
       }
     }
+    } // 体ここまで
 
     // ？の印（ふちは絵柄によらず濃い色。クリームのふちだと黄色が埋もれるため）
     const mk = new Array(W * H).fill(null);
@@ -347,7 +368,35 @@ const SPR = (() => {
       }
       if (hit) out[y * W + x] = 'D';
     }
+
+    // ── 生まれる・消える（案）の仕上げ ──
+    if (p.sil) for (let i = 0; i < W * H; i++) if (out[i]) out[i] = main[i] ? 'Y' : 'y';
+    if (p.dissolve > 0) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const h = (((x * 73856093) ^ (y * 19349663)) >>> 0) % 1000 / 1000;
+      if (h * 0.55 + (y / H) * 0.45 < p.dissolve) out[y * W + x] = null;   // 上から先に崩れる
+    }
+    if (p.clip != null) for (let y = p.clip; y < H; y++) for (let x = 0; x < W; x++) out[y * W + x] = null;
+    if (p.hole) { rect(out, 7, GROUND, 18, 1, 'D'); rect(out, 5, GROUND, 2, 1, 'u'); rect(out, 25, GROUND, 2, 1, 'u'); }
+    if (p.puff) {
+      const PUFF = [null,
+        [[16, 21, 3]],
+        [[13, 20, 4], [19, 19, 4], [16, 23, 4]],
+        [[11, 18, 6], [20, 16, 6], [16, 23, 6], [25, 22, 4], [7, 23, 4]],
+        [[9, 14, 3], [22, 12, 3], [26, 21, 2], [5, 21, 2], [15, 9, 2]],
+        [[7, 10, 1], [24, 8, 1], [28, 17, 1], [3, 18, 1]]][p.puff];
+      const pf = new Array(W * H).fill(null);
+      PUFF.forEach(([cx, cy, r]) => disc(pf, cx, cy, r, 'p'));
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (!pf[y * W + x]) continue;
+        const edge = y + 1 >= H || x + 1 >= W || !pf[(y + 1) * W + x] || !pf[y * W + x + 1];
+        out[y * W + x] = edge ? 'P' : 'p';                                  // 右下のふちに影
+      }
+    }
     for (let i = 0; i < W * H; i++) if (fx[i]) out[i] = fx[i];
+    if (p.parts) p.parts.forEach(([x, y, c, big]) => {
+      set(out, x, y, c);
+      if (big) { set(out, x - 1, y, 'y'); set(out, x + 1, y, 'y'); set(out, x, y - 1, 'y'); set(out, x, y + 1, 'y'); }
+    });
     return out;
   }
 
@@ -394,7 +443,92 @@ const SPR = (() => {
       ] },
   ];
 
-  const byId = Object.fromEntries(ANIMS.map(a => [a.id, a]));
+  // ── 生まれる・消える（案）。持ち主が選ぶまでアプリへは書き出さない（export.js は ANIMS だけを読む） ──
+  const DIRS = [[0, -1], [0.7, -0.7], [1, 0], [0.7, 0.7], [0, 1], [-0.7, 0.7], [-1, 0], [-0.7, -0.7]];
+  const gather = r => DIRS.map(([dx, dy], i) => [Math.round(16 + dx * r * 1.15), Math.round(20 + dy * r * 0.8), i % 2 ? 'y' : 'Y', i % 2 === 0 && r > 6]);
+  const RISE = [[9, 15], [14, 11], [20, 13], [24, 19], [11, 21], [18, 17], [22, 9], [16, 23], [7, 19], [26, 14]];
+  const rise = (s, n = 10) => RISE.slice(0, n).map(([x, y], i) => [x + (i % 2 ? 1 : -1) * (s >> 1), y - s * 3, i % 3 ? 'y' : 'Y', i % 4 === 0 && s < 3]);
+  const wave = (f, eyes = 'open') => ({ bob: [0, 1, 0, 1][f % 4], armR: up([0, 1, 0, -1][f % 4]), eyes });
+  const DRAFTS = [
+    { id: 'birthA', group: 'birth', name: '生まれる 案1：光の粒が集まる', when: 'まわりから光の粒が集まり、光の形になってから色が付く',
+      note: '粒が3コマで真ん中へ寄る（2〜4）→ 光の形が上から組み上がる（5・6）→ 色が付いて伸びる（7）→ 沈んで止まる（8・9）。',
+      frames: [
+        { ms: 350, p: { hide: true } },
+        { ms: 90, p: { hide: true, parts: gather(13) } },
+        { ms: 90, p: { hide: true, parts: gather(9) } },
+        { ms: 90, p: { hide: true, parts: gather(5) } },
+        { ms: 80, p: { sil: true, dissolve: 0.55, tall: 1, wide: -1 } },
+        { ms: 90, p: { sil: true, tall: 1, wide: -1 } },
+        { ms: 90, p: { tall: 2, wide: -1, eyes: 'happy', sparks: 1 } },
+        { ms: 120, p: { bob: 2, wide: 1, eyes: 'happy' } },
+        { ms: 450, p: { sparks: 2 } },
+      ] },
+    { id: 'birthB', group: 'birth', name: '生まれる 案2：地面から生える', when: 'タスクバーに穴があき、目をつぶったまま下から出てくる',
+      note: '穴があく（2）→ 頭から少しずつ出る（3〜5、目はつぶったまま）→ ぽんと抜けて目を開ける（6・7）→ 着地（8）。穴は抜けたら消える。',
+      frames: [
+        { ms: 350, p: { hide: true } },
+        { ms: 110, p: { hide: true, hole: true, parts: [[10, 28, 'u'], [21, 27, 'u']] } },
+        { ms: 110, p: { y: 15, clip: GROUND, hole: true, eyes: 'blink', parts: [[8, 25, 'u'], [24, 24, 'u']] } },
+        { ms: 110, p: { y: 10, clip: GROUND, hole: true, eyes: 'blink', parts: [[6, 22, 'u'], [26, 21, 'u']] } },
+        { ms: 110, p: { y: 5, clip: GROUND, hole: true, eyes: 'blink' } },
+        { ms: 80, p: { y: 0, tall: 2, wide: -1, clip: GROUND, hole: true, eyes: 'open' } },
+        { ms: 100, p: { y: -4, eyes: 'happy', armL: up(), armR: up(), legs: [1, 1, 1, 1] } },
+        { ms: 120, p: { bob: 2, wide: 1, eyes: 'happy' } },
+        { ms: 450, p: {} },
+      ] },
+    { id: 'birthC', group: 'birth', name: '生まれる 案3：ぽんと飛び出す', when: '煙がぽんと出て、中からばんざいで飛び出す',
+      note: '煙がふくらむ（2〜4）→ 煙が晴れながら飛び出す（5・6）→ 着地（7）→ ばんざい（8）。',
+      frames: [
+        { ms: 350, p: { hide: true } },
+        { ms: 70, p: { hide: true, puff: 1 } },
+        { ms: 70, p: { hide: true, puff: 2 } },
+        { ms: 90, p: { hide: true, puff: 3 } },
+        { ms: 90, p: { y: -5, tall: 2, wide: -1, eyes: 'happy', armL: up(), armR: up(), puff: 4 } },
+        { ms: 90, p: { y: -3, eyes: 'happy', armL: up(1), armR: up(1), puff: 5 } },
+        { ms: 120, p: { bob: 2, wide: 1, eyes: 'happy' } },
+        { ms: 300, p: { eyes: 'happy', armL: up(1), armR: up(1), sparks: 1 } },
+        { ms: 400, p: {} },
+      ] },
+    { id: 'byeA', group: 'bye', name: '消える 案1：手を振って光になる', when: 'バイバイと手を振り、光になって上へ散る',
+      note: '手を振る（1〜4）→ にっこり（5）→ 光の形になる（6）→ 上から崩れて粒が昇る（7〜10）→ 何もない間（11）。',
+      frames: [
+        ...[0, 1, 2, 3].map(f => ({ ms: 140, p: wave(f) })),
+        { ms: 220, p: { eyes: 'happy' } },
+        { ms: 90, p: { sil: true } },
+        { ms: 90, p: { sil: true, dissolve: 0.35, parts: rise(0, 4) } },
+        { ms: 90, p: { sil: true, dissolve: 0.65, parts: rise(1, 7) } },
+        { ms: 90, p: { hide: true, parts: rise(2) } },
+        { ms: 110, p: { hide: true, parts: rise(3, 6) } },
+        { ms: 500, p: { hide: true } },
+      ] },
+    { id: 'byeB', group: 'bye', name: '消える 案2：地面に潜る', when: '手を振ってから跳ねて、穴へ飛び込む',
+      note: '手を振る（1・2）→ かがむ（3）→ 跳ねる（4）→ 穴へ頭から沈む（5〜8、ばんざいのまま）→ 穴が閉じる（9）。',
+      frames: [
+        { ms: 140, p: wave(0) }, { ms: 140, p: wave(1) },
+        { ms: 130, p: { bob: 2, wide: 1, eyes: 'happy' } },
+        { ms: 90, p: { y: -4, tall: 2, wide: -1, eyes: 'happy', armL: up(), armR: up(), hole: true } },
+        { ms: 90, p: { y: 2, clip: GROUND, eyes: 'blink', armL: up(), armR: up(), hole: true } },
+        { ms: 90, p: { y: 8, clip: GROUND, eyes: 'blink', armL: up(), armR: up(), hole: true, parts: [[6, 26, 'u'], [25, 25, 'u']] } },
+        { ms: 90, p: { y: 14, clip: GROUND, eyes: 'blink', armL: up(), armR: up(), hole: true, parts: [[5, 23, 'u'], [27, 22, 'u']] } },
+        { ms: 90, p: { y: 19, clip: GROUND, armL: up(), armR: up(), hole: true } },
+        { ms: 200, p: { hide: true, hole: true } },
+        { ms: 500, p: { hide: true } },
+      ] },
+    { id: 'byeC', group: 'bye', name: '消える 案3：ぽんと煙になる', when: '手を振ってから、ぽんと煙になって消える',
+      note: '手を振る（1・2）→ ぎゅっと縮む（3）→ 煙が出る（4〜6）→ 煙が散る（7・8）→ 何もない間（9）。',
+      frames: [
+        { ms: 140, p: wave(0) }, { ms: 140, p: wave(1) },
+        { ms: 140, p: { bob: 2, wide: 1, eyes: 'blink' } },
+        { ms: 70, p: { bob: 2, wide: 1, eyes: 'blink', puff: 1 } },
+        { ms: 70, p: { hide: true, puff: 2 } },
+        { ms: 90, p: { hide: true, puff: 3 } },
+        { ms: 90, p: { hide: true, puff: 4, parts: [[16, 6, 'Y', true]] } },
+        { ms: 110, p: { hide: true, puff: 5 } },
+        { ms: 500, p: { hide: true } },
+      ] },
+  ];
+
+  const byId = Object.fromEntries([...ANIMS, ...DRAFTS].map(a => [a.id, a]));
   const cache = new Map();
   function grid(styleKey, animId, i, flipX) {
     const key = styleKey + '|' + animId + '|' + i + '|' + (flipX ? 1 : 0);
@@ -404,7 +538,7 @@ const SPR = (() => {
     cache.set(key, g);
     return g;
   }
-  return { W, H, GROUND, PAL, STYLES, ANIMS, byId, grid };
+  return { W, H, GROUND, PAL, STYLES, ANIMS, DRAFTS, byId, grid };
 })();
 if (typeof module !== 'undefined') module.exports = SPR;
 </script>
@@ -486,7 +620,8 @@ if (typeof module !== 'undefined') module.exports = SPR;
 
   // ── アニメ一覧 ──
   const cards = $('cards'), cardCv = {};
-  SPR.ANIMS.forEach(a => {
+  const ALL = [...SPR.ANIMS, ...SPR.DRAFTS];
+  ALL.forEach(a => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'card'; b.id = 'card-' + a.id;
     b.innerHTML = '<div class="sw"><canvas class="px"></canvas></div><div class="txt"><span class="nm"></span><span class="wh"></span><span class="mt"></span></div>';
@@ -494,10 +629,10 @@ if (typeof module !== 'undefined') module.exports = SPR;
     b.querySelector('.wh').textContent = a.when;
     b.querySelector('.mt').textContent = a.frames.length + 'コマ・1周 ' + (total(a) / 1000).toFixed(2) + '秒';
     b.addEventListener('click', () => { state.anim = a.id; state.frame = 0; syncCards(); buildStrip(); save(); });
-    cards.appendChild(b);
+    (a.group ? $('drafts') : cards).appendChild(b);
     cardCv[a.id] = b.querySelector('canvas');
   });
-  const syncCards = () => SPR.ANIMS.forEach(a => $('card-' + a.id).setAttribute('aria-pressed', String(a.id === state.anim)));
+  const syncCards = () => ALL.forEach(a => $('card-' + a.id).setAttribute('aria-pressed', String(a.id === state.anim)));
   syncCards();
 
   // ── コマ送り ──
@@ -599,7 +734,7 @@ if (typeof module !== 'undefined') module.exports = SPR;
   function tick(nowT) {
     const dt = Math.min(100, nowT - last) * (state.playing ? state.speed : 0);
     last = nowT; clock += dt;
-    for (const a of SPR.ANIMS) {
+    for (const a of ALL) {
       const cv = cardCv[a.id];
       paint(cv, fit(cv, 4), frameCanvas(state.style, a.id, frameAt(a, clock), false), false);
     }
