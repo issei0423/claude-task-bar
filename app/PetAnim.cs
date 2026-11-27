@@ -54,12 +54,24 @@ public sealed class PetSheet
 {
     public static readonly string[] RequiredAnims = { "typing", "walk", "done", "ask", "idle" };
 
-    public PetSheet(int frame, int ground, PetHit hit, IReadOnlyDictionary<string, PetAnimInfo> anims)
+    /// <summary>
+    /// Animations that may be missing (older assets). walkL/run/runL: left-facing
+    /// walk, the flee run and its left-facing picture; spawn/vanish: birth and
+    /// leaving; startle: the jump just before running away. When one is missing the app falls back (mirror, no flee, no show).
+    /// If one is listed it is checked as strictly as the required ones.
+    /// </summary>
+    public static readonly string[] OptionalAnims = { "walkL", "run", "runL", "spawn", "vanish", "startle" };
+
+    private static readonly IReadOnlyDictionary<string, PetAnimInfo> NoAnims = new Dictionary<string, PetAnimInfo>();
+
+    public PetSheet(int frame, int ground, PetHit hit, IReadOnlyDictionary<string, PetAnimInfo> anims,
+        IReadOnlyDictionary<string, PetAnimInfo>? optional = null)
     {
         Frame = frame;
         Ground = ground;
         Hit = hit;
         Anims = anims;
+        Optional = optional ?? NoAnims;
     }
 
     /// <summary>Width and height of one frame, in dots.</summary>
@@ -68,7 +80,24 @@ public sealed class PetSheet
     public int Ground { get; }
     /// <summary>The clickable box, in dots from the frame's top-left corner.</summary>
     public PetHit Hit { get; }
+    /// <summary>The required animations (RequiredAnims).</summary>
     public IReadOnlyDictionary<string, PetAnimInfo> Anims { get; }
+    /// <summary>The optional animations that the sheet lists (OptionalAnims).</summary>
+    public IReadOnlyDictionary<string, PetAnimInfo> Optional { get; }
+
+    /// <summary>Every animation of the sheet: required first, then optional.</summary>
+    public IEnumerable<PetAnimInfo> AllAnims
+    {
+        get
+        {
+            foreach (var a in Anims.Values) yield return a;
+            foreach (var a in Optional.Values) yield return a;
+        }
+    }
+
+    /// <summary>The animation with this name (required or optional), or null.</summary>
+    public PetAnimInfo? Find(string id) =>
+        Anims.TryGetValue(id, out var a) ? a : Optional.TryGetValue(id, out var o) ? o : null;
 
     public static PetSheet Load(string path)
     {
@@ -119,32 +148,44 @@ public sealed class PetSheet
             var result = new Dictionary<string, PetAnimInfo>();
             foreach (var name in RequiredAnims)
             {
-                if (!anims.TryGetProperty(name, out var a) || a.ValueKind != JsonValueKind.Object)
+                if (!anims.TryGetProperty(name, out var a))
                     throw new InvalidDataException("アニメ '" + name + "' がありません");
-
-                if (!a.TryGetProperty("file", out var f) || f.ValueKind != JsonValueKind.String ||
-                    string.IsNullOrWhiteSpace(f.GetString()))
-                    throw new InvalidDataException("アニメ '" + name + "' の file がありません");
-                var file = f.GetString()!;
-                if (file.IndexOfAny(new[] { '/', '\\', ':' }) >= 0 || file == ".." || file == ".")
-                    throw new InvalidDataException("アニメ '" + name + "' の file はフォルダを含まないファイル名にしてください: " + file);
-
-                if (!a.TryGetProperty("ms", out var m) || m.ValueKind != JsonValueKind.Array)
-                    throw new InvalidDataException("アニメ '" + name + "' の ms (コマごとの長さ) がありません");
-                var list = new List<int>();
-                foreach (var e in m.EnumerateArray())
-                {
-                    if (e.ValueKind != JsonValueKind.Number || !e.TryGetInt32(out var v) || v <= 0)
-                        throw new InvalidDataException("アニメ '" + name + "' の ms は正の整数だけにしてください: " + e);
-                    list.Add(v);
-                }
-                if (list.Count == 0)
-                    throw new InvalidDataException("アニメ '" + name + "' の ms が空です");
-
-                result[name] = new PetAnimInfo(name, file, list);
+                result[name] = ParseAnim(name, a);
             }
-            return new PetSheet(frame, ground, new PetHit(hx, hy, hw, hh), result);
+            var optional = new Dictionary<string, PetAnimInfo>();
+            foreach (var name in OptionalAnims)
+            {
+                if (anims.TryGetProperty(name, out var a)) optional[name] = ParseAnim(name, a);
+            }
+            return new PetSheet(frame, ground, new PetHit(hx, hy, hw, hh), result, optional);
         }
+    }
+
+    private static PetAnimInfo ParseAnim(string name, JsonElement a)
+    {
+        if (a.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("アニメ '" + name + "' がありません");
+
+        if (!a.TryGetProperty("file", out var f) || f.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(f.GetString()))
+            throw new InvalidDataException("アニメ '" + name + "' の file がありません");
+        var file = f.GetString()!;
+        if (file.IndexOfAny(new[] { '/', '\\', ':' }) >= 0 || file == ".." || file == ".")
+            throw new InvalidDataException("アニメ '" + name + "' の file はフォルダを含まないファイル名にしてください: " + file);
+
+        if (!a.TryGetProperty("ms", out var m) || m.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("アニメ '" + name + "' の ms (コマごとの長さ) がありません");
+        var list = new List<int>();
+        foreach (var e in m.EnumerateArray())
+        {
+            if (e.ValueKind != JsonValueKind.Number || !e.TryGetInt32(out var v) || v <= 0)
+                throw new InvalidDataException("アニメ '" + name + "' の ms は正の整数だけにしてください: " + e);
+            list.Add(v);
+        }
+        if (list.Count == 0)
+            throw new InvalidDataException("アニメ '" + name + "' の ms が空です");
+
+        return new PetAnimInfo(name, file, list);
     }
 
     private static int Int(JsonElement obj, string key, string label)

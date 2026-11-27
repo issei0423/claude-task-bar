@@ -70,6 +70,16 @@ public static class Program
         ReconcileNewestWins();
         ReconcileNewSessions();
         ReconcileThenStageWalks();
+        PetSheetOptionalReal();
+        PetSheetOptionalParse();
+        LeftPictures();
+        UsageReading();
+        ConfigFlee();
+        FleeBehaviour();
+        StartleBehaviour();
+        MutterBehaviour();
+        SpawnBehaviour();
+        VanishBehaviour();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -1411,6 +1421,709 @@ public static class Program
         stage2.Sync(PetSelection.Select(r2.Snapshot()).Displayed);
         stage2.Advance(1e9);
         Check(stage2.Actors[0].Anim == "idle" && stage2.Actors[0].X == PetStage.HomeX(0), "list+stage: a new idle session stands at its seat");
+    }
+
+    // ---- left-facing pictures (#4), fleeing (#11), birth and leaving (#12) ----
+
+    private static string AnimJson(string name, int frames) =>
+        "\"" + name + "\":{\"file\":\"" + name + ".png\",\"ms\":[" + string.Join(",", Enumerable.Repeat("100", frames)) + "]}";
+
+    /// <summary>
+    /// A sheet with the required animations plus the chosen optional ones
+    /// (spawn/vanish: that many frames of 100 ms, 0 = none; startle: 3 frames = 300 ms).
+    /// </summary>
+    private static PetSheet SheetWith(bool walkL, bool run, bool runL, int spawn = 0, int vanish = 0, bool startle = false)
+    {
+        var parts = new List<string> { PetAnimsJson() };
+        if (walkL) parts.Add(AnimJson("walkL", 2));
+        if (run) parts.Add(AnimJson("run", 2));
+        if (runL) parts.Add(AnimJson("runL", 2));
+        if (spawn > 0) parts.Add(AnimJson("spawn", spawn));
+        if (vanish > 0) parts.Add(AnimJson("vanish", vanish));
+        if (startle) parts.Add(AnimJson("startle", 3));
+        return PetSheet.Parse(PetJson(string.Join(",", parts)));
+    }
+
+    private static PetStage StageWith(PetSheet? sheet)
+    {
+        var st = new PetStage();
+        st.UseSheet(sheet);
+        return st;
+    }
+
+    private static void PetSheetOptionalReal()
+    {
+        var petDir = FindPetDir();
+        if (petDir == null) { Check(false, "pet optional: pet folder found"); return; }
+        var sheet = PetSheet.Load(Path.Combine(petDir, "pet.json"));
+        foreach (var name in new[] { "walkL", "run", "runL", "spawn", "vanish", "startle" })
+        {
+            Check(sheet.Optional.TryGetValue(name, out var anim) && anim.Id == name && sheet.Find(name) == anim,
+                "pet optional: pet.json has '" + name + "'");
+            if (!sheet.Optional.TryGetValue(name, out var an)) continue;
+            var png = Path.Combine(petDir, an.File);
+            Check(File.Exists(png), "pet optional: " + an.File + " exists");
+            if (!File.Exists(png)) continue;
+            var head = new byte[24];
+            using (var fs = File.OpenRead(png)) fs.Read(head, 0, head.Length);
+            bool isPng = head[0] == 0x89 && head[1] == 0x50 && head[2] == 0x4E && head[3] == 0x47;
+            int width = (head[16] << 24) | (head[17] << 16) | (head[18] << 8) | head[19];
+            int height = (head[20] << 24) | (head[21] << 16) | (head[22] << 8) | head[23];
+            Check(isPng && width == an.Ms.Count * 32 && height == 32, "pet optional: " + an.File + " is a PNG, frames x 32 wide, 32 tall");
+        }
+        Check(sheet.Anims.Count == 5, "pet optional: the required animations stay five");
+        Check(sheet.Find("typing") != null && sheet.Find("nope") == null, "pet optional: Find looks at required and optional");
+
+        // The real sheet makes the stage use the left pictures, the birth/leaving, the startle and the run.
+        var st = StageWith(sheet);
+        var a = Sess("a");
+        st.Sync(new[] { a }, announceNew: false);
+        a.Status = SessionStatus.Asking;
+        st.Sync(new[] { a });
+        st.Advance(100);
+        Check(st.Actors[0].Anim == "walkL" && !st.Actors[0].Flip, "pet optional: with the real sheet a pet going left uses walkL");
+        a.Status = SessionStatus.Running;
+        st.Sync(new[] { a });
+        st.Advance(1e9);
+        st.SetFleeing(true);
+        Check(st.Actors[0].Anim == "startle" && st.Actors[0].Startling, "pet optional: with the real sheet the pets startle first");
+        st.Advance(sheet.Find("startle")!.TotalMs);
+        Check(st.Actors[0].Anim == "run" || st.Actors[0].Anim == "runL", "pet optional: and then run");
+        st.SetFleeing(false);
+        st.Advance(1e9);
+
+        var born = StageWith(sheet);
+        var b = Sess("b");
+        born.Sync(new[] { b }, announceNew: true);
+        Check(born.Actors[0].Anim == "spawn", "pet optional: with the real sheet a new pet plays spawn");
+        born.Advance(sheet.Find("spawn")!.TotalMs);
+        Check(born.Actors[0].Anim == "typing", "pet optional: ... once, then types");
+        born.Sync(new SessionInfo[0]);
+        Check(born.Actors.Count == 1 && born.Actors[0].Anim == "vanish", "pet optional: with the real sheet a pet whose session is gone plays vanish");
+        born.Advance(sheet.Find("vanish")!.TotalMs);
+        Check(born.Actors.Count == 0, "pet optional: ... and is gone when it is over");
+    }
+
+    private static void PetSheetOptionalParse()
+    {
+        string msg;
+        var plain = PetSheet.Parse(PetJson(PetAnimsJson()));
+        Check(plain.Optional.Count == 0 && plain.Find("walkL") == null && plain.AllAnims.Count() == 5,
+            "pet optional: an old sheet without them parses and has none");
+        var all = SheetWith(true, true, true, 3, 4);
+        Check(all.Optional.Count == 5 && all.Anims.Count == 5 && all.AllAnims.Count() == 10, "pet optional: all five optional animations are read");
+        Check(all.Find("spawn")!.TotalMs == 300 && all.Find("vanish")!.TotalMs == 400, "pet optional: spawn and vanish lengths are read");
+        Check(SheetWith(true, true, true, 3, 4, startle: true).Find("startle")!.TotalMs == 300, "pet optional: startle is read");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson() + ",\"walkL\":{\"file\":\"a.png\",\"ms\":[]}")), out msg) && msg.Contains("walkL"),
+            "pet optional: a listed optional animation with empty ms is rejected");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson() + ",\"vanish\":5")), out msg) && msg.Contains("vanish"),
+            "pet optional: a listed optional animation that is not an object is rejected");
+        Check(Throws(() => PetSheet.Parse(PetJson(PetAnimsJson() + ",\"run\":{\"file\":\"../x.png\",\"ms\":[100]}")), out msg) && msg.Contains("run"),
+            "pet optional: a file name with a folder is rejected");
+        Check(!PetSheet.RequiredAnims.Contains("walkL") && !PetSheet.RequiredAnims.Contains("spawn") &&
+              !PetSheet.RequiredAnims.Contains("vanish") && !PetSheet.RequiredAnims.Contains("startle"),
+            "pet optional: walkL, spawn, vanish and startle are not required");
+    }
+
+    private static void LeftPictures()
+    {
+        // With walkL: no mirroring.
+        var st = StageWith(SheetWith(true, false, false));
+        var a = Sess("a");
+        st.Sync(new[] { a });
+        a.Status = SessionStatus.Asking;
+        st.Sync(new[] { a });
+        st.Advance(100);
+        var pa = st.Actors[0];
+        Check(pa.Anim == "walkL" && pa.FacingLeft && !pa.Flip, "left: going left with walkL uses walkL and does not mirror");
+        st.Advance(1e9);
+        Check(pa.Anim == "ask" && !pa.Flip && !pa.FacingLeft, "left: arrived, the ask picture is not mirrored");
+        a.Status = SessionStatus.Running;
+        st.Sync(new[] { a });
+        st.Advance(100);
+        Check(pa.Anim == "walk" && !pa.FacingLeft && !pa.Flip, "left: going right uses walk, not mirrored");
+
+        // Without walkL (an old sheet): the picture is mirrored, as before.
+        var old = StageWith(SheetWith(false, false, false));
+        var b = Sess("b", SessionStatus.Asking);
+        old.Sync(new[] { b });
+        old.Advance(100);
+        var pb = old.Actors[0];
+        Check(pb.Anim == "walk" && pb.FacingLeft && pb.Flip, "left: no walkL in the sheet -> walk, mirrored");
+        b.Status = SessionStatus.Running;
+        old.Sync(new[] { b });
+        old.Advance(1e9);
+        Check(pb.Anim == "typing" && !pb.Flip, "left: at the seat nothing is mirrored");
+
+        // A stage that was never given a sheet behaves like the old one.
+        var none = new PetStage();
+        var c = Sess("c", SessionStatus.Asking);
+        none.Sync(new[] { c });
+        none.Advance(100);
+        Check(none.Actors[0].Anim == "walk" && none.Actors[0].FacingLeft && none.Actors[0].Flip, "left: a stage without a sheet mirrors the walk");
+    }
+
+    private static string UsageJson(string five, string seven = "{\"used_percentage\":20,\"resets_at\":9999999999}") =>
+        "{\"model\":{\"id\":\"x\"},\"rate_limits\":{\"five_hour\":" + five + ",\"seven_day\":" + seven + "}}";
+
+    private static void UsageReading()
+    {
+        long now = T0.ToUnixTimeSeconds();
+        string Five(string pct, string? resets) =>
+            "{\"used_percentage\":" + pct + (resets == null ? "" : ",\"resets_at\":" + resets) + "}";
+
+        Check(UsageReader.Parse(UsageJson(Five("89", (now + 3600).ToString())), T0) == 89, "usage: a normal file gives the five-hour percentage");
+        Check(UsageReader.Parse(UsageJson(Five("91.5", (now + 3600).ToString())), T0) == 91.5, "usage: a fraction is kept");
+        Check(UsageReader.Parse(UsageJson(Five("95", (now - 1).ToString())), T0) == 0, "usage: resets_at in the past counts as 0");
+        Check(UsageReader.Parse(UsageJson(Five("95", now.ToString())), T0) == 0, "usage: resets_at exactly now counts as 0");
+        Check(UsageReader.Parse(UsageJson(Five("95", (now + 1).ToString())), T0) == 95, "usage: resets_at one second ahead still counts");
+        Check(UsageReader.Parse(UsageJson(Five("95", null)), T0) == 95, "usage: without resets_at the percentage is taken as it is");
+        Check(UsageReader.Parse(UsageJson(Five("0", (now + 5).ToString())), T0) == 0, "usage: 0 is a known value");
+        Check(UsageReader.Parse(UsageJson(Five("100", (now + 5).ToString())), T0) == 100, "usage: 100 is a known value");
+        Check(UsageReader.Parse(UsageJson(Five("95", (now + 3600).ToString()), "{\"used_percentage\":1}"), T0) == 95,
+            "usage: the seven-day window is not used");
+
+        Check(UsageReader.Parse("{ not json", T0) == null, "usage: broken JSON is unknown");
+        Check(UsageReader.Parse("", T0) == null, "usage: an empty file is unknown");
+        Check(UsageReader.Parse("[]", T0) == null, "usage: a non-object is unknown");
+        Check(UsageReader.Parse("{}", T0) == null, "usage: no rate_limits is unknown");
+        Check(UsageReader.Parse("{\"rate_limits\":{}}", T0) == null, "usage: no five_hour is unknown");
+        Check(UsageReader.Parse("{\"rate_limits\":{\"five_hour\":{}}}", T0) == null, "usage: no used_percentage is unknown");
+        Check(UsageReader.Parse(UsageJson("{\"used_percentage\":\"90\",\"resets_at\":" + (now + 9) + "}"), T0) == null, "usage: a string percentage is unknown");
+        Check(UsageReader.Parse(UsageJson(Five("-1", null)), T0) == null, "usage: a negative percentage is unknown");
+        Check(UsageReader.Parse(UsageJson(Five("101", null)), T0) == null, "usage: a percentage over 100 is unknown");
+        Check(UsageReader.Parse(UsageJson("null"), T0) == null, "usage: five_hour null is unknown");
+
+        Check(UsageReader.ShouldFlee(90, 90) && UsageReader.ShouldFlee(95, 90), "usage: at and above the threshold the pets flee");
+        Check(!UsageReader.ShouldFlee(89.99, 90) && !UsageReader.ShouldFlee(0, 90), "usage: below the threshold they do not");
+        Check(!UsageReader.ShouldFlee(null, 90) && !UsageReader.ShouldFlee(null, 0), "usage: unknown never makes them flee");
+        Check(UsageReader.ShouldFlee(0, 0) && UsageReader.ShouldFlee(100, 100), "usage: threshold 0 and 100 work at their edges");
+
+        var dir = Path.Combine(Path.GetTempPath(), "ctb-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "statusline-last.json");
+            Check(UsageReader.ReadFile(path, T0) == null, "usage file: a missing file is unknown");
+            File.WriteAllText(path, UsageJson(Five("93", (now + 600).ToString())));
+            Check(UsageReader.ReadFile(path, T0) == 93, "usage file: a good file is read");
+            Check(UsageReader.ReadFile(path, T0.AddSeconds(601)) == 0, "usage file: the same file after resets_at counts as 0");
+            File.WriteAllText(path, "{ \"rate_limits\": ");
+            Check(UsageReader.ReadFile(path, T0) == null, "usage file: a half-written file is unknown");
+            Check(UsageReader.ReadFile(dir, T0) == null, "usage file: a folder is unknown, not a crash");
+            Check(UsageReader.ReadFile("", T0) == null, "usage file: an empty path is unknown");
+            Check(UsageReader.DefaultPath().EndsWith("statusline-last.json") && UsageReader.DefaultPath().Contains(".claude"),
+                "usage file: the default is ~/.claude/statusline-last.json");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static void ConfigFlee()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ctb-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "config.json");
+        try
+        {
+            var d = AppConfig.Load(path);
+            Check(d.FleeEnabled && d.FleeThreshold == 90 && d.UsageFile == UsageReader.DefaultPath(), "flee config: defaults without a file");
+            File.WriteAllText(path, "{\"port\": 9999}");
+            d = AppConfig.Load(path);
+            Check(d.FleeEnabled && d.FleeThreshold == 90 && d.UsageFile == UsageReader.DefaultPath(), "flee config: defaults without the keys");
+            File.WriteAllText(path, "{\"fleeThreshold\": 75, \"fleeEnabled\": false, \"usageFile\": \"D:\\\\u\\\\usage.json\"}");
+            d = AppConfig.Load(path);
+            Check(d.FleeThreshold == 75 && !d.FleeEnabled && d.UsageFile == @"D:\u\usage.json", "flee config: all three are honored");
+            foreach (var v in new[] { "0", "100", "89.5" })
+            {
+                File.WriteAllText(path, "{\"fleeThreshold\": " + v + "}");
+                Check(AppConfig.Load(path).FleeThreshold == double.Parse(v, System.Globalization.CultureInfo.InvariantCulture), "flee config: threshold " + v + " is honored");
+            }
+            foreach (var v in new[] { "-1", "101", "1000", "\"80\"", "null", "true" })
+            {
+                File.WriteAllText(path, "{\"fleeThreshold\": " + v + "}");
+                Check(AppConfig.Load(path).FleeThreshold == 90, "flee config: threshold " + v + " -> 90");
+            }
+            foreach (var v in new[] { "\"false\"", "0", "null", "[]" })
+            {
+                File.WriteAllText(path, "{\"fleeEnabled\": " + v + "}");
+                Check(AppConfig.Load(path).FleeEnabled, "flee config: fleeEnabled " + v + " -> true");
+            }
+            foreach (var v in new[] { "\"\"", "\"  \"", "5", "null" })
+            {
+                File.WriteAllText(path, "{\"usageFile\": " + v + "}");
+                Check(AppConfig.Load(path).UsageFile == UsageReader.DefaultPath(), "flee config: usageFile " + v + " -> default");
+            }
+            File.WriteAllText(path, "{\"usageFile\": \"~/x/u.json\"}");
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            Check(AppConfig.Load(path).UsageFile == Path.Combine(home, "x/u.json"), "flee config: a leading ~ means the user folder");
+            File.WriteAllText(path, "{\"port\": 9999, \"petScale\": 4, \"fleeThreshold\": 70}");
+            var all = AppConfig.Load(path);
+            Check(all.Port == 9999 && all.PetScale == 4 && all.FleeThreshold == 70, "flee config: the older keys still work alongside");
+            File.WriteAllText(path, "{ broken");
+            Check(AppConfig.Load(path).FleeEnabled && AppConfig.Load(path).FleeThreshold == 90, "flee config: a broken file -> defaults");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static void FleeBehaviour()
+    {
+        Check(PetStage.FleeSpeed == 90, "flee: the speed is 90 dots per second");
+        Check(PetStage.FleeMinX == 16 && PetStage.FleeMaxX == PetStage.WidthDots - 16, "flee: the run covers the stage minus half a picture each side");
+
+        var st = StageWith(SheetWith(true, true, true));
+        var a = Sess("a"); var b = Sess("b");
+        st.Sync(new[] { a, b });
+        st.Advance(500);
+        Check(!st.Fleeing && st.Actors[0].Anim == "typing", "flee: nothing runs until told to");
+        st.SetFleeing(true);
+        Check(st.Fleeing, "flee: SetFleeing(true) is remembered");
+        st.Advance(1000);
+        var pa = st.Actors[0]; var pb = st.Actors[1];
+        Check(pa.Fleeing && pa.Anim == "runL" && pa.FacingLeft && !pa.Flip && !pa.AtFront && Math.Abs(pa.X - 167) < 1e-6,
+            "flee: a working pet runs left at 90 dots per second (runL, no mirror)");
+        Check(pb.Fleeing && Math.Abs(pb.X - 141) < 1e-6, "flee: every working pet runs, from its own place");
+        st.Advance(2000);
+        Check(pa.Anim == "run" && !pa.FacingLeft && Math.Abs(pa.X - 45) < 1e-6,
+            "flee: it turned at the left end and runs right (run)");
+        st.Advance(2000);
+        Check(Math.Abs(pa.X - 225) < 1e-6 && !pa.FacingLeft, "flee: and keeps going right");
+        st.Advance(1000);
+        Check(pa.FacingLeft && pa.Anim == "runL" && Math.Abs(pa.X - (258 - (225 + 90 - 258))) < 1e-6, "flee: it turned at the right end and runs left again");
+
+        // Always inside the stage, whatever the steps are.
+        bool inside = true, names = true, sawLeft = false, sawRight = false;
+        var rnd = new Random(7);
+        for (int i = 0; i < 400; i++)
+        {
+            st.Advance(rnd.Next(1, 120));
+            foreach (var p in st.Actors)
+            {
+                if (p.X < PetStage.FleeMinX - 1e-9 || p.X > PetStage.FleeMaxX + 1e-9) inside = false;
+                if (p.Anim != "run" && p.Anim != "runL") names = false;
+                if (p.Anim == "run" && p.FacingLeft) names = false;
+                if (p.Anim == "runL" && !p.FacingLeft) names = false;
+                if (p.FacingLeft) sawLeft = true; else sawRight = true;
+            }
+        }
+        Check(inside, "flee: the pets never leave the stage");
+        Check(names && sawLeft && sawRight, "flee: run goes with right, runL with left, and both directions happen");
+        st.Advance(1e9);
+        Check(pa.X >= PetStage.FleeMinX && pa.X <= PetStage.FleeMaxX && pa.Fleeing, "flee: a huge step stays inside the stage");
+
+        // A call for attention comes first.
+        var st2 = StageWith(SheetWith(true, true, true));
+        var c = Sess("c"); var d = Sess("d");
+        st2.Sync(new[] { c, d });
+        st2.SetFleeing(true);
+        st2.Advance(1000);
+        var pc = st2.Actors[0]; var pd = st2.Actors[1];
+        Check(pc.Fleeing && Math.Abs(pc.X - 167) < 1e-6, "flee+ask: before the call both run");
+        c.Status = SessionStatus.Asking;
+        st2.Sync(new[] { c, d });
+        st2.Advance(100);
+        Check(!pc.Fleeing && pc.Anim == "walkL" && pc.FacingLeft && Math.Abs(pc.X - 164) < 1e-6,
+            "flee+ask: an asking pet stops running and walks to its front spot");
+        Check(pd.Fleeing && (pd.Anim == "run" || pd.Anim == "runL"), "flee+ask: the others keep running");
+        st2.Advance(3000);
+        Check(pc.X == PetStage.FrontX(0) && pc.Anim == "ask" && pc.AtFront && !pc.Muttering, "flee+ask: it arrives and asks (the call's bubble shows) while the usage is high");
+        st2.Advance(5000);
+        Check(pc.X == PetStage.FrontX(0) && pc.AtFront, "flee+ask: and stays there");
+        d.Status = SessionStatus.DoneUnseen;
+        st2.Sync(new[] { c, d });
+        st2.Advance(1e9);
+        Check(pd.X == PetStage.FrontX(1) && pd.Anim == "done" && pd.AtFront && !pd.Fleeing, "flee+done: an unseen finish comes out and dances too");
+
+        // Back to work while the usage is high: runs again.
+        c.Status = SessionStatus.Running;
+        st2.Sync(new[] { c, d });
+        st2.Advance(100);
+        Check(pc.Fleeing && !pc.AtFront && (pc.Anim == "run" || pc.Anim == "runL"), "flee: a pet that goes back to work runs again");
+        // Seen = idle pets run too.
+        d.Status = SessionStatus.DoneSeen;
+        st2.Sync(new[] { c, d });
+        st2.Advance(100);
+        Check(pd.Fleeing && !pd.AtFront, "flee: an acknowledged (idle) pet runs too");
+
+        // Usage went down: walk home.
+        st2.SetFleeing(false);
+        double xBefore = pc.X;
+        st2.Advance(100);
+        Check(!pc.Fleeing && pc.Anim == "walk" && !pc.FacingLeft && Math.Abs(pc.X - (xBefore + 3)) < 1e-6,
+            "flee end: the pet walks (30 dots per second) toward its seat");
+        st2.Advance(1e9);
+        Check(pc.X == PetStage.HomeX(0) && pc.Anim == "typing" && !pc.Fleeing, "flee end: it sits at its seat typing again");
+        Check(pd.X == PetStage.HomeX(1) && pd.Anim == "idle", "flee end: the idle pet is home and idle");
+
+        // Walk speed on the way home is the walking speed, not the running speed.
+        var st3 = StageWith(SheetWith(true, true, true));
+        st3.Sync(new[] { Sess("e") });
+        st3.SetFleeing(true);
+        st3.Advance(2000);
+        double x0 = st3.Actors[0].X;
+        st3.SetFleeing(false);
+        st3.Advance(1000);
+        Check(Math.Abs(Math.Abs(st3.Actors[0].X - x0) - PetStage.WalkSpeed) < 1e-6, "flee end: back at walking speed");
+
+        // Without a run picture nothing runs.
+        var st4 = StageWith(SheetWith(true, false, false));
+        st4.Sync(new[] { Sess("f") });
+        st4.SetFleeing(true);
+        st4.Advance(1000);
+        Check(st4.Actors[0].X == PetStage.HomeX(0) && st4.Actors[0].Anim == "typing" && !st4.Actors[0].Fleeing,
+            "flee: no run in the sheet -> the pets stay at their seats");
+        var st5 = new PetStage(); // no sheet at all
+        st5.Sync(new[] { Sess("g") });
+        st5.SetFleeing(true);
+        st5.Advance(1000);
+        Check(st5.Actors[0].X == PetStage.HomeX(0) && st5.Actors[0].Anim == "typing", "flee: a stage without a sheet does not run");
+
+        // run without runL: mirrored when going left.
+        var st6 = StageWith(SheetWith(true, true, false));
+        st6.Sync(new[] { Sess("h") });
+        st6.SetFleeing(true);
+        st6.Advance(1000);
+        var ph = st6.Actors[0];
+        Check(ph.Anim == "run" && ph.FacingLeft && ph.Flip, "flee: run without runL is mirrored going left");
+        st6.Advance(2000);
+        Check(ph.Anim == "run" && !ph.FacingLeft && !ph.Flip, "flee: ... and not mirrored going right");
+
+        // A pet that stands at the very left end starts out to the right.
+        var st7 = StageWith(SheetWith(true, true, true));
+        var five = new List<SessionInfo>();
+        for (int k = 0; k < PetStage.Slots; k++) five.Add(Sess("s" + k));
+        five[4].Status = SessionStatus.Asking;
+        st7.Sync(five);
+        st7.Advance(1e9);
+        var p4 = st7.Actors[4];
+        Check(p4.X == PetStage.FrontX(4) && p4.AtFront, "flee: (setup) the last seat's pet is out at the left end");
+        five[4].Status = SessionStatus.Running;
+        st7.Sync(five);
+        st7.SetFleeing(true);
+        st7.Advance(100);
+        Check(p4.Fleeing && !p4.FacingLeft && p4.Anim == "run" && Math.Abs(p4.X - 24) < 1e-6, "flee: at the left end it bounces and runs right");
+
+        // On then off before any time passes changes nothing.
+        var st8 = StageWith(SheetWith(true, true, true));
+        st8.Sync(new[] { Sess("z") });
+        st8.SetFleeing(true); st8.SetFleeing(false);
+        st8.Advance(1000);
+        Check(st8.Actors[0].X == PetStage.HomeX(0) && st8.Actors[0].Anim == "typing", "flee: on then off before any time passes changes nothing");
+    }
+
+    private static void StartleBehaviour()
+    {
+        var sheet = SheetWith(true, true, true, startle: true);
+        var st = StageWith(sheet);
+        var a = Sess("a"); var b = Sess("b", SessionStatus.Asking); var c = Sess("c");
+        st.Sync(new[] { a, b, c });
+        st.Advance(1e9);
+        var pa = st.Actors[0]; var pb = st.Actors[1]; var pc = st.Actors[2];
+        Check(pb.AtFront && pb.Anim == "ask", "startle: (setup) one pet is calling out");
+
+        // The moment the usage goes over: the pets that would run startle on the spot.
+        st.SetFleeing(true);
+        Check(pa.Startling && pa.Anim == "startle" && pa.AnimMs == 0 && pa.X == PetStage.HomeX(0) && pa.Fleeing,
+            "startle: when fleeing starts, a working pet plays the startle where it stands");
+        Check(pc.Startling && pc.Anim == "startle", "startle: every pet that will run does");
+        Check(!pb.Startling && pb.Anim == "ask" && pb.AtFront, "startle: a pet that is calling out does not (its call stays first)");
+        st.Advance(200);
+        Check(pa.Anim == "startle" && pa.X == PetStage.HomeX(0) && Math.Abs(pa.AnimMs - 200) < 1e-9, "startle: it stays put while it plays (300 ms)");
+        st.Advance(100);
+        Check(!pa.Startling && pa.Anim == "runL" && pa.AnimMs == 0 && pa.X == PetStage.HomeX(0), "startle: once over it starts running (left first)");
+        st.Advance(1000);
+        Check(Math.Abs(pa.X - (PetStage.HomeX(0) - 90)) < 1e-6, "startle: and runs at full speed after it");
+
+        // Only once.
+        bool again = false;
+        st.SetFleeing(true); // no change: no second startle
+        for (int i = 0; i < 100; i++) { st.Advance(100); foreach (var p in st.Actors) if (p.Anim == "startle") again = true; }
+        Check(!again, "startle: it is played once, not again while the pets keep running");
+
+        // Off and on again: once more.
+        st.SetFleeing(false);
+        st.Advance(1e9);
+        Check(pa.X == PetStage.HomeX(0) && pa.Anim == "typing", "startle: (setup) back at the seats");
+        st.SetFleeing(true);
+        Check(pa.Startling && pa.Anim == "startle", "startle: a new flee plays it again");
+
+        // Pets that join or come back to work later do not startle.
+        var d = Sess("d");
+        st.Sync(new[] { a, b, c, d });
+        var pd = st.Actors.First(p => p.SessionId == "d");
+        Check(!pd.Startling && pd.Anim != "startle" && (pd.Anim == "run" || pd.Anim == "runL"), "startle: a pet that appears while the pets run just runs");
+        b.Status = SessionStatus.Running;
+        st.Sync(new[] { a, b, c, d });
+        st.Advance(100);
+        Check(!pb.Startling && pb.Anim != "startle" && pb.Fleeing, "startle: a pet that goes back to work during the run just runs");
+
+        // The usage goes down during the startle: back to walking, no running.
+        var st2 = StageWith(sheet);
+        st2.Sync(new[] { Sess("e") });
+        st2.SetFleeing(true);
+        st2.Advance(100);
+        st2.SetFleeing(false);
+        st2.Advance(100);
+        var pe = st2.Actors[0];
+        Check(!pe.Startling && !pe.Fleeing && pe.Anim == "typing", "startle: ending the flee during the startle stops it");
+
+        // A call for attention during the startle takes over.
+        var st3 = StageWith(sheet);
+        var f = Sess("f");
+        st3.Sync(new[] { f });
+        st3.SetFleeing(true);
+        st3.Advance(100);
+        f.Status = SessionStatus.Asking;
+        st3.Sync(new[] { f });
+        st3.Advance(100);
+        var pf = st3.Actors[0];
+        Check(!pf.Startling && !pf.Fleeing && pf.Anim == "walkL", "startle: a pet that starts asking during the startle walks out");
+
+        // A pet being born does not startle, and runs after the birth.
+        var st4 = StageWith(SheetWith(true, true, true, spawn: 4, startle: true));
+        st4.Sync(new[] { Sess("g") }, announceNew: true);
+        st4.SetFleeing(true);
+        var pg = st4.Actors[0];
+        Check(!pg.Startling && pg.Anim == "spawn", "startle: a pet that is being born does not startle");
+        st4.Advance(400);
+        Check(pg.Fleeing && (pg.Anim == "run" || pg.Anim == "runL"), "startle: it runs once born");
+
+        // No startle in the sheet: straight to running.
+        var st5 = StageWith(SheetWith(true, true, true));
+        st5.Sync(new[] { Sess("h") });
+        st5.SetFleeing(true);
+        st5.Advance(0);
+        Check(!st5.Actors[0].Startling && st5.Actors[0].Anim == "runL", "startle: no startle in the sheet -> it just runs");
+
+        // No run picture: no startle either (nothing to startle into).
+        var st6 = StageWith(SheetWith(true, false, false, startle: true));
+        st6.Sync(new[] { Sess("i") });
+        st6.SetFleeing(true);
+        st6.Advance(0);
+        Check(!st6.Actors[0].Startling && st6.Actors[0].Anim == "typing", "startle: no run in the sheet -> no startle, no flee");
+
+        // Already fleeing before the pets exist (the app started over the line): no startle.
+        var st7 = StageWith(sheet);
+        st7.SetFleeing(true);
+        st7.Sync(new[] { Sess("j") }, announceNew: false);
+        Check(!st7.Actors[0].Startling && st7.Actors[0].Anim == "runL", "startle: pets that exist after flee began (startup over the line) just run");
+    }
+
+    private static void MutterBehaviour()
+    {
+        Check(PetStage.MutterText == "もう無理！", "mutter: the text is 'もう無理！'");
+        Check(PetStage.MutterPeriodMs == 12000 && PetStage.MutterShowMs == 2500, "mutter: every 12 seconds, for 2.5 seconds");
+
+        var st = StageWith(SheetWith(true, true, true, startle: true));
+        var a = Sess("a"); var b = Sess("b");
+        st.Sync(new[] { a, b });
+        var pa = st.Actors[0]; var pb = st.Actors[1];
+        st.Advance(60000);
+        Check(!pa.Muttering && !pb.Muttering, "mutter: nobody mutters while not running");
+        st.SetFleeing(true);
+        st.Advance(300); // the startle does not count as running
+        Check(pa.Anim == "runL" || pa.Anim == "run", "mutter: (setup) the startle is over");
+
+        // Sample every 100 ms of running for 40 seconds.
+        var onA = new List<int>(); var onB = new List<int>();
+        bool prevA = false, prevB = false;
+        var startsA = new List<int>(); var startsB = new List<int>();
+        for (int t = 100; t <= 40000; t += 100)
+        {
+            st.Advance(100);
+            if (pa.Muttering) onA.Add(t);
+            if (pb.Muttering) onB.Add(t);
+            if (pa.Muttering && !prevA) startsA.Add(t);
+            if (pb.Muttering && !prevB) startsB.Add(t);
+            prevA = pa.Muttering; prevB = pb.Muttering;
+        }
+        // Seat 0: 12 s cycle, shown in the last 2.5 s -> from 9.5 s, 21.5 s, 33.5 s.
+        Check(startsA.SequenceEqual(new[] { 9500, 21500, 33500 }), "mutter: the first pet starts at 9.5 s and then every 12 s (" + string.Join(",", startsA) + ")");
+        Check(onA.Count == 3 * 25, "mutter: and each time it lasts 2.5 s (" + onA.Count + " samples of 100 ms)");
+        // Seat 1 is 2.4 s ahead.
+        Check(startsB.SequenceEqual(new[] { 7100, 19100, 31100 }), "mutter: the second pet is staggered by 2.4 s (" + string.Join(",", startsB) + ")");
+        Check(onB.Count == 3 * 25, "mutter: the second pet also shows it for 2.5 s each time");
+        int together = 0;
+        foreach (var t in onA) if (onB.Contains(t)) together++;
+        Check(together <= 3, "mutter: neighbouring pets overlap by at most one 100 ms sample per cycle (" + together + ")");
+
+        // Stops with the run, and does not show for pets calling out.
+        st.Advance(9700);
+        a.Status = SessionStatus.Asking;
+        st.Sync(new[] { a, b });
+        st.Advance(1e9);
+        Check(!pa.Muttering && pa.AtFront, "mutter: a pet that is calling out does not mutter");
+        st.SetFleeing(false);
+        st.Advance(1e9);
+        Check(!pb.Muttering && !pa.Muttering, "mutter: nobody mutters after the run ends");
+
+        // The clock starts again with the next run.
+        st.SetFleeing(true);
+        st.Advance(300);
+        st.Advance(9400);
+        Check(pb.Muttering && !pa.Muttering, "mutter: a new run counts from its own start (the second pet at 9.4 s of running)");
+    }
+
+    private static void SpawnBehaviour()
+    {
+        var sheet = SheetWith(true, true, true, spawn: 4, vanish: 3);
+        var st = StageWith(sheet);
+        var a = Sess("a");
+        st.Sync(new[] { a }, announceNew: true);
+        var pa = st.Actors[0];
+        Check(pa.Spawning && pa.Anim == "spawn" && pa.AnimMs == 0 && pa.X == PetStage.HomeX(0) && !pa.AtFront && !pa.Flip,
+            "spawn: a new session starts with the birth animation at its seat");
+        st.Advance(300);
+        Check(pa.Spawning && pa.Anim == "spawn" && Math.Abs(pa.AnimMs - 300) < 1e-9, "spawn: it keeps playing for its length (400 ms)");
+        st.Advance(100);
+        Check(!pa.Spawning && pa.Anim == "typing" && pa.AnimMs == 0 && pa.X == PetStage.HomeX(0), "spawn: after one play it goes on as usual");
+        st.Advance(2000);
+        Check(pa.Anim == "typing", "spawn: and does not play again");
+
+        // The sessions that exist at startup do not play it; new ones afterwards do.
+        var st2 = StageWith(sheet);
+        var b = Sess("b"); var c = Sess("c");
+        st2.Sync(new[] { b }, announceNew: false);
+        Check(!st2.Actors[0].Spawning && st2.Actors[0].Anim == "typing", "spawn: a pet that existed at startup appears without it");
+        st2.Sync(new[] { b, c }, announceNew: true);
+        Check(!st2.Actors[0].Spawning && st2.Actors[1].Spawning && st2.Actors[1].Anim == "spawn", "spawn: a session that comes later plays it");
+        st2.Sync(new[] { b, c }, announceNew: false);
+        Check(st2.Actors[1].Spawning, "spawn: a later sync does not cancel it");
+
+        // No spawn animation in the sheet: it just appears.
+        var st3 = StageWith(SheetWith(true, true, true));
+        st3.Sync(new[] { Sess("d") }, announceNew: true);
+        Check(!st3.Actors[0].Spawning && st3.Actors[0].Anim == "typing", "spawn: no spawn in the sheet -> appears at once");
+
+        // A call for attention waits for the birth to finish.
+        var st4 = StageWith(sheet);
+        var e = Sess("e", SessionStatus.Asking);
+        st4.Sync(new[] { e });
+        st4.Advance(300);
+        var pe = st4.Actors[0];
+        Check(pe.X == PetStage.HomeX(0) && pe.Anim == "spawn" && !pe.AtFront, "spawn: a pet that is already asking stays put while it is born");
+        st4.Advance(100);
+        st4.Advance(1000);
+        Check(Math.Abs(pe.X - (PetStage.HomeX(0) - 30)) < 1e-6 && pe.Anim == "walkL", "spawn: then it walks out to ask");
+
+        // Running away waits for the birth to finish too.
+        var st5 = StageWith(sheet);
+        st5.SetFleeing(true);
+        st5.Sync(new[] { Sess("f") });
+        st5.Advance(300);
+        Check(st5.Actors[0].X == PetStage.HomeX(0) && st5.Actors[0].Anim == "spawn", "spawn: no running during the birth");
+        st5.Advance(100);
+        st5.Advance(1000);
+        Check(Math.Abs(st5.Actors[0].X - (PetStage.HomeX(0) - 90)) < 1e-6 && st5.Actors[0].Anim == "runL", "spawn: then it runs");
+
+        // The same session that is already on the stage does not get a new birth.
+        var st6 = StageWith(sheet);
+        var g = Sess("g");
+        st6.Sync(new[] { g }, announceNew: false);
+        st6.Advance(100);
+        st6.Sync(new[] { g }, announceNew: true);
+        Check(!st6.Actors[0].Spawning && st6.Actors[0].Anim == "typing", "spawn: a pet that is already here is not born again");
+    }
+
+    private static void VanishBehaviour()
+    {
+        var sheet = SheetWith(true, true, true, spawn: 4, vanish: 3);
+        var st = StageWith(sheet);
+        var a = Sess("a"); var b = Sess("b");
+        st.Sync(new[] { a, b }, announceNew: false);
+        st.Advance(100);
+        var pa = st.Actors[0];
+        st.Sync(new[] { b });
+        Check(st.Actors.Count == 2 && pa.Leaving && pa.Anim == "vanish" && pa.AnimMs == 0 && pa.X == PetStage.HomeX(0) && !pa.AtFront,
+            "vanish: a pet whose session is gone stays and plays the leaving animation");
+        st.Advance(200);
+        Check(st.Actors.Count == 2 && pa.Leaving && Math.Abs(pa.AnimMs - 200) < 1e-9, "vanish: it stays until the animation is over (300 ms)");
+
+        // The seat stays taken meanwhile.
+        var c = Sess("c");
+        st.Sync(new[] { b, c });
+        PetActor? pc = null;
+        foreach (var p in st.Actors) if (p.SessionId == "c") pc = p;
+        Check(pc != null && pc.Slot == 2, "vanish: a new session cannot take the seat of a leaving pet");
+        st.Advance(100);
+        Check(st.Actors.Count == 2 && !st.Actors.Contains(pa), "vanish: when the animation is over the pet is taken off");
+        var d = Sess("d");
+        st.Sync(new[] { b, c, d }, announceNew: false);
+        Check(st.Actors[0].SessionId == "d" && st.Actors[0].Slot == 0, "vanish: and its seat is free again");
+
+        // Nothing is called out while leaving.
+        var st2 = StageWith(sheet);
+        var e = Sess("e", SessionStatus.Asking);
+        st2.Sync(new[] { e }, announceNew: false);
+        st2.Advance(1e9);
+        var pe = st2.Actors[0];
+        Check(pe.AtFront && pe.Anim == "ask", "vanish: (setup) the asking pet is out in front");
+        st2.Sync(new SessionInfo[0]);
+        Check(pe.Leaving && !pe.AtFront && pe.Anim == "vanish" && pe.X == PetStage.FrontX(0), "vanish: it leaves from where it stands, with no call for attention");
+        st2.Advance(200);
+        Check(pe.X == PetStage.FrontX(0) && pe.Anim == "vanish" && st2.Actors.Count == 1, "vanish: it does not move while leaving");
+        st2.Advance(1e9);
+        Check(st2.Actors.Count == 0, "vanish: and then it is gone (the last one too)");
+
+        // Statuses changing during the leaving are ignored.
+        var st3 = StageWith(sheet);
+        var f = Sess("f");
+        st3.Sync(new[] { f }, announceNew: false);
+        st3.Sync(new SessionInfo[0]);
+        var pf = st3.Actors[0];
+        f.Status = SessionStatus.Asking;
+        st3.Advance(100);
+        Check(pf.Leaving && pf.Anim == "vanish" && pf.X == PetStage.HomeX(0) && !pf.AtFront, "vanish: it does not walk out while leaving");
+
+        // The session comes back while leaving: it stays.
+        var st4 = StageWith(sheet);
+        var g = Sess("g");
+        st4.Sync(new[] { g }, announceNew: false);
+        st4.Advance(100);
+        var pg = st4.Actors[0];
+        st4.Sync(new SessionInfo[0]);
+        st4.Advance(100);
+        st4.Sync(new[] { g });
+        Check(st4.Actors.Count == 1 && ReferenceEquals(st4.Actors[0], pg) && !pg.Leaving && pg.Anim == "typing" && pg.X == PetStage.HomeX(0),
+            "vanish: if the session comes back the leaving stops and the same pet stays");
+        st4.Advance(1e9);
+        Check(st4.Actors.Count == 1 && st4.Actors[0].Anim == "typing" && !pg.Spawning, "vanish: it is not removed afterwards and is not born again");
+
+        // No vanish animation: gone at once, as before.
+        var st5 = StageWith(SheetWith(true, true, true));
+        st5.Sync(new[] { Sess("h") }, announceNew: false);
+        st5.Sync(new SessionInfo[0]);
+        Check(st5.Actors.Count == 0, "vanish: no vanish in the sheet -> removed at once");
+        var st5b = new PetStage();
+        st5b.Sync(new[] { Sess("h2") });
+        st5b.Sync(new SessionInfo[0]);
+        Check(st5b.Actors.Count == 0, "vanish: a stage without a sheet removes at once");
+
+        // Running away stops where it is.
+        var st6 = StageWith(sheet);
+        st6.Sync(new[] { Sess("i") }, announceNew: false);
+        st6.SetFleeing(true);
+        st6.Advance(1000);
+        var pi = st6.Actors[0];
+        double xi = pi.X;
+        st6.Sync(new SessionInfo[0]);
+        st6.Advance(100);
+        Check(pi.Leaving && !pi.Fleeing && !pi.Muttering && pi.X == xi && pi.Anim == "vanish", "vanish: a running pet stops and leaves where it is");
+
+        // All seats taken, one leaving: the waiting session gets the seat as soon as it is free.
+        var st7 = StageWith(sheet);
+        var five = new List<SessionInfo>();
+        for (int k = 0; k < PetStage.Slots; k++) five.Add(Sess("s" + k));
+        st7.Sync(five, announceNew: false);
+        var next = new List<SessionInfo>(five.GetRange(1, PetStage.Slots - 1)) { Sess("fresh") };
+        st7.Sync(next, announceNew: true);
+        Check(st7.Actors.Count == PetStage.Slots && !st7.Actors.Any(p => p.SessionId == "fresh"),
+            "vanish: with every seat taken the newcomer waits");
+        st7.Advance(300);
+        var born = st7.Actors.FirstOrDefault(p => p.SessionId == "fresh");
+        Check(born != null && born.Slot == 0 && born.Spawning && born.Anim == "spawn" && st7.Actors.Count == PetStage.Slots,
+            "vanish: it takes the seat the moment the leaving pet is gone, and is born");
+        var h1 = st7.Actors.First(p => p.SessionId == "s1");
+        Check(h1.Slot == 1 && h1.X == PetStage.HomeX(1), "vanish: the other pets never move seats");
     }
 
     private static async Task ServerRoundTrip()

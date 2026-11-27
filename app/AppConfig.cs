@@ -10,6 +10,7 @@ namespace ClaudeTaskBar;
 /// but values are no longer hardcoded across the app and the hook:
 /// notify.ps1 reads the same file for the port.
 /// Example: { "port": 8765, "orcaPath": "D:\\Tools\\orca\\resources\\bin\\orca.exe", "petScale": 2 }
+/// Fleeing (5-hour usage high): "usageFile", "fleeThreshold" (0-100, default 90), "fleeEnabled" (default true).
 /// </summary>
 public sealed class AppConfig
 {
@@ -22,6 +23,29 @@ public sealed class AppConfig
     public int PetScale { get; init; } = DefaultPetScale;
 
     public const int DefaultPetScale = 2;
+
+    /// <summary>
+    /// Where the 5-hour usage is read from (the statusline's file). Missing = the
+    /// pets never flee. A leading "~" or "%VAR%" is expanded.
+    /// </summary>
+    public string UsageFile { get; init; } = UsageReader.DefaultPath();
+
+    /// <summary>The pets flee when the 5-hour usage reaches this percent (0-100).</summary>
+    public double FleeThreshold { get; init; } = DefaultFleeThreshold;
+
+    public const double DefaultFleeThreshold = 90;
+
+    /// <summary>False turns the fleeing off.</summary>
+    public bool FleeEnabled { get; init; } = true;
+
+    /// <summary>"~" at the start means the user's folder; %VAR% is expanded.</summary>
+    public static string ExpandPath(string path)
+    {
+        path = Environment.ExpandEnvironmentVariables(path);
+        if (path == "~" || path.StartsWith("~/") || path.StartsWith("~\\"))
+            path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Length > 2 ? path.Substring(2) : "");
+        return path;
+    }
 
     public static string DefaultPath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -59,7 +83,34 @@ public sealed class AppConfig
             {
                 petScale = sv;
             }
-            return new AppConfig { Port = port, OrcaPath = orcaPath, PetScale = petScale };
+            string usageFile = UsageReader.DefaultPath();
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("usageFile", out var uf) &&
+                uf.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(uf.GetString()))
+            {
+                usageFile = ExpandPath(uf.GetString()!.Trim());
+            }
+            double fleeThreshold = DefaultFleeThreshold;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("fleeThreshold", out var ft) &&
+                ft.ValueKind == JsonValueKind.Number &&
+                ft.TryGetDouble(out var fv) && fv >= 0 && fv <= 100)
+            {
+                fleeThreshold = fv;
+            }
+            bool fleeEnabled = true;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("fleeEnabled", out var fe) &&
+                (fe.ValueKind == JsonValueKind.True || fe.ValueKind == JsonValueKind.False))
+            {
+                fleeEnabled = fe.GetBoolean();
+            }
+            return new AppConfig
+            {
+                Port = port, OrcaPath = orcaPath, PetScale = petScale,
+                UsageFile = usageFile, FleeThreshold = fleeThreshold, FleeEnabled = fleeEnabled,
+            };
         }
         catch
         {
