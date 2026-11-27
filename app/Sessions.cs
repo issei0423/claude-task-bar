@@ -51,6 +51,10 @@ public sealed class SessionRegistry
 {
     private readonly object _lock = new();
     private readonly Dictionary<string, SessionInfo> _sessions = new();
+    // Ids that left on purpose (SessionEnd, right click, clear). Reconcile does
+    // not bring them back from Claude's session list; the session's own next
+    // hook event does (Apply forgets the id).
+    private readonly HashSet<string> _left = new();
 
     /// <summary>Raised after any change. May fire on a background thread.</summary>
     public event Action? Changed;
@@ -68,9 +72,11 @@ public sealed class SessionRegistry
             if (e.Kind == NotifyEventKind.Ended)
             {
                 changed = _sessions.Remove(id);
+                _left.Add(id);
             }
             else
             {
+                _left.Remove(id);
                 if (!_sessions.TryGetValue(id, out var s))
                 {
                     s = new SessionInfo(id) { StartedAt = now };
@@ -134,15 +140,93 @@ public sealed class SessionRegistry
     public void Dismiss(string id)
     {
         bool changed;
-        lock (_lock) changed = _sessions.Remove(id);
+        lock (_lock) { changed = _sessions.Remove(id); if (changed) _left.Add(id); }
         if (changed) Changed?.Invoke();
     }
 
     public void Clear()
     {
         bool changed;
-        lock (_lock) { changed = _sessions.Count > 0; _sessions.Clear(); }
+        lock (_lock)
+        {
+            changed = _sessions.Count > 0;
+            foreach (var id in _sessions.Keys) _left.Add(id);
+            _sessions.Clear();
+        }
         if (changed) Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Fit the ledger to one running session from Claude Code's own list
+    /// (~/.claude/sessions). Returns true (and raises Changed) when it changed
+    /// something. Hooks stay in charge of status: an existing session keeps its
+    /// status; a new one starts as Running when the list says "busy" and as
+    /// DoneSeen otherwise.
+    /// "Others" are ledger sessions with the same pid but another id (the old id
+    /// of a process whose session changed). If any of them had an event more
+    /// recent than the list's UpdatedAt, the list is older than what the hooks
+    /// said, so nothing is done. Otherwise they are removed.
+    /// A session that left on purpose (ended, right click) is not brought back.
+    /// </summary>
+    public bool Reconcile(LiveSessionEntry e, DateTimeOffset now)
+    {
+        bool changed = false;
+        lock (_lock)
+        {
+            if (_left.Contains(e.SessionId)) return false;
+
+            List<SessionInfo>? others = null;
+            foreach (var s in _sessions.Values)
+                if (s.Pid == e.Pid && s.Id != e.SessionId) (others ??= new List<SessionInfo>()).Add(s);
+
+            if (others != null && e.UpdatedAt != null)
+            {
+                foreach (var o in others)
+                    if (o.LastEventAt > e.UpdatedAt.Value) return false;
+            }
+            if (others != null)
+            {
+                foreach (var o in others) _sessions.Remove(o.Id);
+                changed = true;
+            }
+
+            if (!_sessions.TryGetValue(e.SessionId, out var cur))
+            {
+                var leaf = NotifyEvent.LeafName(e.Cwd);
+                _sessions[e.SessionId] = new SessionInfo(e.SessionId)
+                {
+                    Source = string.IsNullOrWhiteSpace(leaf) ? "Claude" : leaf,
+                    ProjectPath = e.Cwd,
+                    Pid = e.Pid,
+                    Status = string.Equals(e.Status, "busy", StringComparison.OrdinalIgnoreCase)
+                        ? SessionStatus.Running : SessionStatus.DoneSeen,
+                    StartedAt = now,
+                    LastEventAt = now,
+                };
+                changed = true;
+            }
+            else
+            {
+                if (cur.Pid == 0) { cur.Pid = e.Pid; changed = true; }
+                if (string.IsNullOrWhiteSpace(cur.ProjectPath) && !string.IsNullOrWhiteSpace(e.Cwd))
+                {
+                    cur.ProjectPath = e.Cwd;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) Changed?.Invoke();
+        return changed;
+    }
+
+    /// <summary>Remember the window of a session, only if it has none yet. No Changed.</summary>
+    public void SetHwnd(string id, string hwnd)
+    {
+        if (string.IsNullOrWhiteSpace(hwnd)) return;
+        lock (_lock)
+        {
+            if (_sessions.TryGetValue(id, out var s) && string.IsNullOrWhiteSpace(s.Hwnd)) s.Hwnd = hwnd;
+        }
     }
 
     /// <summary>All sessions, in display order (priority, then longest-waiting first).</summary>
