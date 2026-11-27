@@ -151,6 +151,7 @@ public partial class App : System.Windows.Application
     /// </summary>
     private void StartWatchingSessions()
     {
+        CheckSessions(); // once right away, so pets of sessions that are already open appear at startup
         _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _watch.Tick += (_, __) => CheckSessions();
         _watch.Start();
@@ -158,12 +159,131 @@ public partial class App : System.Windows.Application
 
     private void CheckSessions()
     {
+        DiscoverSessions();
         try
         {
             foreach (var id in _liveness.FindGone(_registry.Snapshot(), ProcessStart, WindowExists))
                 _registry.Dismiss(id);
         }
-        catch (Exception ex) { OrcaJump.Log("session watch failed: " + ex.GetType().Name + ": " + ex.Message); }
+        catch (Exception ex) { LogOnce("session watch failed: " + ex.GetType().Name + ": " + ex.Message); }
+    }
+
+    // The same failure every 5 seconds would fill the log: each text is written once.
+    private readonly HashSet<string> _logged = new();
+
+    private void LogOnce(string message)
+    {
+        if (_logged.Add(message)) OrcaJump.Log(message);
+    }
+
+    /// <summary>
+    /// Read Claude Code's own list of running sessions (~/.claude/sessions/*.json,
+    /// read only) and give every open interactive session a pet, so pets show
+    /// up after this app restarts without waiting for the next hook. Hooks
+    /// still decide the status; the list only says who exists. Any file that
+    /// cannot be read or understood is skipped.
+    /// </summary>
+    private void DiscoverSessions()
+    {
+        try
+        {
+            var dir = LiveSessions.DefaultDir();
+            if (!Directory.Exists(dir)) return;
+            foreach (var path in Directory.EnumerateFiles(dir, "*.json"))
+            {
+                try
+                {
+                    string text;
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (var rd = new StreamReader(fs))
+                        text = rd.ReadToEnd();
+
+                    var entry = LiveSessions.Parse(text);
+                    if (entry == null || !LiveSessions.IsInteractive(entry)) continue;
+                    if (!LiveSessions.SameProcess(entry.ProcStartFileTime, ProcessStart(entry.Pid))) continue;
+
+                    _registry.Reconcile(entry, DateTimeOffset.Now);
+                    var added = _registry.Snapshot().FirstOrDefault(s => s.Id == entry.SessionId);
+                    if (added != null && string.IsNullOrWhiteSpace(added.Hwnd))
+                    {
+                        var hwnd = FindWindowOf(entry.Pid);
+                        if (hwnd.Length > 0) _registry.SetHwnd(entry.SessionId, hwnd);
+                    }
+                }
+                catch (IOException) { }                    // being written or locked: next time
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception ex) { LogOnce("session discovery failed: " + ex.GetType().Name + ": " + ex.Message); }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public IntPtr Reserved1;
+        public IntPtr PebBaseAddress;
+        public IntPtr Reserved2_0;
+        public IntPtr Reserved2_1;
+        public IntPtr UniqueProcessId;
+        public IntPtr InheritedFromUniqueProcessId;
+    }
+
+    [System.Runtime.InteropServices.DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(IntPtr process, int infoClass,
+        ref ProcessBasicInformation info, int size, out int returned);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    /// <summary>The parent's pid, or 0 when it cannot be found.</summary>
+    private static int ParentPid(int pid)
+    {
+        var h = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+        if (h == IntPtr.Zero) return 0;
+        try
+        {
+            var info = new ProcessBasicInformation();
+            int status = NtQueryInformationProcess(h, 0 /* ProcessBasicInformation */, ref info,
+                System.Runtime.InteropServices.Marshal.SizeOf<ProcessBasicInformation>(), out _);
+            if (status != 0) return 0;
+            long parent = info.InheritedFromUniqueProcessId.ToInt64();
+            return parent > 0 && parent <= int.MaxValue ? (int)parent : 0;
+        }
+        finally { CloseHandle(h); }
+    }
+
+    /// <summary>
+    /// The window of a process: walk up its parents (at most 12 steps) and take
+    /// the first main window handle that is not 0, as decimal text. "" if none
+    /// (or on any failure).
+    /// </summary>
+    private static string FindWindowOf(int pid)
+    {
+        try
+        {
+            int cur = pid;
+            for (int i = 0; i < 12 && cur > 0; i++)
+            {
+                try
+                {
+                    using var p = System.Diagnostics.Process.GetProcessById(cur);
+                    var h = p.MainWindowHandle;
+                    if (h != IntPtr.Zero) return h.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                catch (ArgumentException) { return ""; } // the process is gone
+                catch { }                                // cannot look at this one: try its parent
+                int parent = ParentPid(cur);
+                if (parent <= 0 || parent == cur) break;
+                cur = parent;
+            }
+        }
+        catch { }
+        return "";
     }
 
     private static DateTime? ProcessStart(int pid)

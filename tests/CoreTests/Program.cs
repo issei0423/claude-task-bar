@@ -51,6 +51,14 @@ public static class Program
         PidInLedger();
         LivenessProcess();
         LivenessWindow();
+        LiveParse();
+        LiveIsInteractive();
+        LiveSameProcess();
+        ReconcileBasics();
+        ReconcileOthers();
+        ReconcileThenStage();
+        SetHwndOnlyWhenEmpty();
+        LeftSessionsStayAway();
         await ServerRoundTrip();
         Console.WriteLine($"---\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -841,6 +849,215 @@ public static class Program
         var d1 = new DateTime(2026, 11, 27, 9, 0, 0, DateTimeKind.Local);
         Check(new SessionLiveness().FindGone(new[] { both }, _ => d1, window).Count == 0 && asked.Count == 0,
             "liveness window: a session with a pid ignores its window");
+    }
+
+    // The shape of ~/.claude/sessions/<pid>.json (Claude Code 2.1.x), with synthetic values.
+    private const string RealShape =
+        "{\"pid\":21852,\"sessionId\":\"56d655be-aaaa\",\"cwd\":\"C:\\\\Users\\\\u\\\\proj\",\"startedAt\":1795748189094," +
+        "\"procStart\":\"134402217861979895\",\"version\":\"2.1.332\",\"kind\":\"interactive\",\"entrypoint\":\"cli\"," +
+        "\"name\":\"proj-92\",\"status\":\"idle\",\"updatedAt\":1795755162578,\"statusUpdatedAt\":1795755162578}";
+
+    private static void LiveParse()
+    {
+        var e = LiveSessions.Parse(RealShape);
+        Check(e != null, "live parse: the real shape parses");
+        if (e != null)
+        {
+            Check(e.Pid == 21852 && e.SessionId == "56d655be-aaaa", "live parse: pid and sessionId");
+            Check(e.Cwd == @"C:\Users\u\proj" && e.Kind == "interactive" && e.Status == "idle", "live parse: cwd, kind, status");
+            Check(e.ProcStartFileTime == 134402217861979895L, "live parse: procStart text is read as a FILETIME");
+            Check(e.UpdatedAt == DateTimeOffset.FromUnixTimeMilliseconds(1795755162578), "live parse: updatedAt is Unix milliseconds");
+        }
+
+        var num = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\",\"procStart\":134402217861979895}");
+        Check(num != null && num.ProcStartFileTime == 134402217861979895L, "live parse: procStart as a number is read");
+        Check(num != null && num.UpdatedAt == null && num.Cwd == "" && num.Kind == "" && num.Status == "",
+            "live parse: missing optional fields are empty / null");
+        var badStart = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\",\"procStart\":\"soon\",\"updatedAt\":\"x\"}");
+        Check(badStart != null && badStart.ProcStartFileTime == null && badStart.UpdatedAt == null,
+            "live parse: unreadable procStart / updatedAt become null, the entry stays");
+
+        Check(LiveSessions.Parse("{\"sessionId\":\"s\"}") == null, "live parse: no pid -> null");
+        Check(LiveSessions.Parse("{\"pid\":0,\"sessionId\":\"s\"}") == null, "live parse: pid 0 -> null");
+        Check(LiveSessions.Parse("{\"pid\":-3,\"sessionId\":\"s\"}") == null, "live parse: negative pid -> null");
+        Check(LiveSessions.Parse("{\"pid\":\"abc\",\"sessionId\":\"s\"}") == null, "live parse: pid as letters -> null");
+        Check(LiveSessions.Parse("{\"pid\":1.5,\"sessionId\":\"s\"}") == null, "live parse: fractional pid -> null");
+        Check(LiveSessions.Parse("{\"pid\":5}") == null, "live parse: no sessionId -> null");
+        Check(LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"\"}") == null, "live parse: empty sessionId -> null");
+        Check(LiveSessions.Parse("{\"pid\":5,\"sessionId\":7}") == null, "live parse: sessionId that is not text -> null");
+        Check(LiveSessions.Parse("{\"pid\":21852,\"sessionId\":\"56d6") == null, "live parse: half-written JSON -> null");
+        Check(LiveSessions.Parse("not json") == null, "live parse: broken JSON -> null");
+        Check(LiveSessions.Parse("") == null && LiveSessions.Parse(null) == null, "live parse: empty text -> null");
+        Check(LiveSessions.Parse("[1,2]") == null, "live parse: a non-object -> null");
+        Check(LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\",\"updatedAt\":99999999999999999}") is { UpdatedAt: null },
+            "live parse: an updatedAt out of range becomes null");
+    }
+
+    private static void LiveIsInteractive()
+    {
+        bool I(string kind) => LiveSessions.IsInteractive(new LiveSessionEntry { Pid = 1, SessionId = "s", Kind = kind });
+        Check(I("interactive") && I("Interactive") && I("INTERACTIVE"), "live interactive: 'interactive' in any case");
+        Check(I(""), "live interactive: an empty kind counts");
+        var none = LiveSessions.Parse("{\"pid\":5,\"sessionId\":\"s\"}");
+        Check(none != null && LiveSessions.IsInteractive(none), "live interactive: a file with no kind counts");
+        Check(!I("headless") && !I("sdk") && !I("interactive2"), "live interactive: other kinds do not");
+    }
+
+    private static void LiveSameProcess()
+    {
+        const long ft = 134402217861979895L;
+        var exact = DateTime.FromFileTimeUtc(ft);
+        Check(LiveSessions.SameProcess(ft, exact), "same process: the exact start time");
+        Check(LiveSessions.SameProcess(ft, exact.AddSeconds(1)), "same process: 1 second off is the same");
+        Check(LiveSessions.SameProcess(ft, exact.AddSeconds(-2)), "same process: 2 seconds early is still the same");
+        Check(!LiveSessions.SameProcess(ft, exact.AddSeconds(5)), "same process: 5 seconds off is another process (pid reused)");
+        Check(!LiveSessions.SameProcess(ft, exact.AddSeconds(-5)), "same process: 5 seconds early is another process");
+        Check(LiveSessions.SameProcess(null, exact), "same process: no procStart in the file -> a live process counts");
+        Check(!LiveSessions.SameProcess(ft, null), "same process: no process -> false");
+        Check(!LiveSessions.SameProcess(null, null), "same process: no process and no procStart -> false");
+        Check(LiveSessions.SameProcess(ft, DateTime.MinValue), "same process: MinValue (could not look) -> true");
+        Check(LiveSessions.SameProcess(ft, exact.ToLocalTime()), "same process: a local-time start is converted to UTC first");
+    }
+
+    private static LiveSessionEntry Entry(string id, int pid, string status = "idle", DateTimeOffset? updatedAt = null, string cwd = @"C:\x\proj") =>
+        new LiveSessionEntry { Pid = pid, SessionId = id, Cwd = cwd, Kind = "interactive", Status = status, UpdatedAt = updatedAt };
+
+    private static void ReconcileBasics()
+    {
+        var r = new SessionRegistry();
+        int changes = 0;
+        r.Changed += () => changes++;
+
+        Check(r.Reconcile(Entry("b", 10, "busy"), T0) && r.Count == 1, "reconcile: a session that is not in the ledger is added");
+        var b = r.Snapshot()[0];
+        Check(b.Status == SessionStatus.Running && b.Pid == 10 && b.Source == "proj" && b.ProjectPath == @"C:\x\proj",
+            "reconcile: busy -> Running; pid, name (cwd leaf) and path are filled in");
+        Check(b.StartedAt == T0 && b.LastEventAt == T0, "reconcile: StartedAt and LastEventAt are 'now'");
+        Check(changes == 1, "reconcile: Changed once for the add");
+
+        r.Reconcile(Entry("i", 11, "idle"), T0);
+        r.Reconcile(Entry("u", 12, "Weird"), T0);
+        r.Reconcile(Entry("B", 13, "BUSY"), T0);
+        var snap = r.Snapshot();
+        Check(snap.First(s => s.Id == "i").Status == SessionStatus.DoneSeen, "reconcile: idle -> DoneSeen");
+        Check(snap.First(s => s.Id == "u").Status == SessionStatus.DoneSeen, "reconcile: an unknown status -> DoneSeen");
+        Check(snap.First(s => s.Id == "B").Status == SessionStatus.Running, "reconcile: 'BUSY' in any case -> Running");
+        Check(r.Count == 4, "reconcile: four sessions");
+
+        changes = 0;
+        Check(!r.Reconcile(Entry("b", 10, "busy"), T0.AddSeconds(5)) && r.Count == 4 && changes == 0,
+            "reconcile: the same session again is not added twice, returns false, no Changed");
+
+        Check(r.Reconcile(Entry("nocwd", 14, "idle", cwd: ""), T0) && r.Snapshot().First(s => s.Id == "nocwd").Source == "Claude",
+            "reconcile: no cwd -> the name is 'Claude'");
+
+        // Hooks decide the status: an existing session keeps it.
+        var h = new SessionRegistry();
+        h.Apply(Ev(NotifyEventKind.Done, "hooked"), T0);
+        changes = 0;
+        h.Changed += () => changes++;
+        Check(h.Reconcile(Entry("hooked", 55, "idle"), T0.AddMinutes(1)), "reconcile: an existing session without a pid gets one (a change)");
+        var hs = h.Snapshot()[0];
+        Check(hs.Status == SessionStatus.DoneUnseen && hs.Pid == 55 && hs.ProjectPath == @"C:\x\proj",
+            "reconcile: the status stays DoneUnseen (idle does not overwrite it); pid and path are filled");
+        Check(changes == 1, "reconcile: Changed once for the fill-in");
+        Check(!h.Reconcile(Entry("hooked", 55, "idle"), T0.AddMinutes(2)) && changes == 1, "reconcile: nothing more to fill -> false, no Changed");
+
+        var keep = new SessionRegistry();
+        keep.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "k", Pid = 10, ProjectPath = @"C:\own\path" }, T0);
+        keep.Reconcile(Entry("k", 99, "busy", cwd: @"C:\other"), T0.AddMinutes(1));
+        var ks = keep.Snapshot()[0];
+        Check(ks.Pid == 10 && ks.ProjectPath == @"C:\own\path", "reconcile: a pid and a path that are already set are not overwritten");
+    }
+
+    private static void ReconcileOthers()
+    {
+        // The process now runs another session: the old id goes, the new one comes.
+        var r = new SessionRegistry();
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "old", Pid = 70 }, T0);
+        Check(r.Reconcile(Entry("new", 70, "busy", updatedAt: T0.AddHours(1)), T0.AddHours(1)), "others: the list is newer -> reconcile changes the ledger");
+        Check(r.Count == 1 && r.Snapshot()[0].Id == "new", "others: the old id of the same pid is removed and the new id is added");
+
+        // The hooks said something later than the list: do nothing.
+        var r2 = new SessionRegistry();
+        r2.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "old", Pid = 70 }, T0.AddHours(2));
+        int changes = 0;
+        r2.Changed += () => changes++;
+        Check(!r2.Reconcile(Entry("new", 70, "busy", updatedAt: T0.AddHours(1)), T0.AddHours(3)), "others: a hook event newer than the list -> false");
+        Check(r2.Count == 1 && r2.Snapshot()[0].Id == "old" && changes == 0, "others: ... the ledger and Changed are untouched");
+
+        // No UpdatedAt: cannot say the list is older, so remove and add.
+        var r3 = new SessionRegistry();
+        r3.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "old", Pid = 70 }, T0.AddHours(2));
+        Check(r3.Reconcile(Entry("new", 70, "idle", updatedAt: null), T0.AddHours(3)) && r3.Count == 1 && r3.Snapshot()[0].Id == "new",
+            "others: no updatedAt in the list -> the old id is removed and the new one added");
+
+        // Other pids are never touched.
+        var r4 = new SessionRegistry();
+        r4.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "x", Pid = 71 }, T0);
+        r4.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "nopid" }, T0);
+        r4.Reconcile(Entry("y", 72, "busy", updatedAt: T0.AddHours(1)), T0.AddHours(1));
+        Check(r4.Count == 3, "others: sessions with another pid (or none) stay");
+    }
+
+    private static void ReconcileThenStage()
+    {
+        var r = new SessionRegistry();
+        r.Reconcile(Entry("busy1", 1, "busy"), T0);
+        r.Reconcile(Entry("idle1", 2, "idle"), T0.AddSeconds(1));
+        var stage = new PetStage();
+        stage.Sync(PetSelection.Select(r.Snapshot()).Displayed);
+        stage.Advance(0);
+        var busy = stage.Actors.First(a => a.SessionId == "busy1");
+        var idle = stage.Actors.First(a => a.SessionId == "idle1");
+        Check(stage.Actors.Count == 2, "reconcile+stage: both discovered sessions get a pet");
+        Check(busy.Anim == "typing" && busy.X == PetStage.HomeX(busy.Slot), "reconcile+stage: a busy session sits at its seat typing");
+        Check(idle.Anim == "idle" && idle.X == PetStage.HomeX(idle.Slot) && !idle.AtFront,
+            "reconcile+stage: an idle session stands at its seat (does not walk out)");
+    }
+
+    private static void SetHwndOnlyWhenEmpty()
+    {
+        var r = new SessionRegistry();
+        int changes = 0;
+        r.Changed += () => changes++;
+        r.Apply(Ev(NotifyEventKind.Running, "a"), T0);
+        r.Apply(new NotifyEvent { Kind = NotifyEventKind.Running, SessionId = "b", Hwnd = "111" }, T0);
+        changes = 0;
+        r.SetHwnd("a", "222");
+        r.SetHwnd("b", "333");
+        r.SetHwnd("nope", "444");
+        r.SetHwnd("a", "");
+        var snap = r.Snapshot();
+        Check(snap.First(s => s.Id == "a").Hwnd == "222", "sethwnd: an empty hwnd is filled in");
+        Check(snap.First(s => s.Id == "b").Hwnd == "111", "sethwnd: an hwnd that is already set is kept");
+        Check(changes == 0 && r.Count == 2, "sethwnd: no Changed, no new session for an unknown id");
+        r.SetHwnd("a", "999");
+        Check(r.Snapshot().First(s => s.Id == "a").Hwnd == "222", "sethwnd: once filled in, it is not replaced");
+    }
+
+    private static void LeftSessionsStayAway()
+    {
+        // A right click, SessionEnd and "clear all" must not be undone by the next look at Claude's list.
+        var r = new SessionRegistry();
+        r.Reconcile(Entry("a", 1, "busy"), T0);
+        r.Dismiss("a");
+        Check(!r.Reconcile(Entry("a", 1, "busy"), T0.AddSeconds(5)) && r.Count == 0, "left: a dismissed pet is not brought back by the list");
+        r.Apply(Ev(NotifyEventKind.Running, "a"), T0.AddSeconds(10));
+        Check(r.Count == 1, "left: the session's own next hook event brings it back");
+        r.Reconcile(Entry("a", 1, "busy"), T0.AddSeconds(15)); // fills in the pid the hook did not send
+        Check(!r.Reconcile(Entry("a", 1, "busy"), T0.AddSeconds(16)) && r.Count == 1, "left: ... and the list then adds nothing twice");
+
+        var e = new SessionRegistry();
+        e.Reconcile(Entry("z", 2, "busy"), T0);
+        e.Apply(new NotifyEvent { Kind = NotifyEventKind.Ended, SessionId = "z" }, T0.AddSeconds(1));
+        Check(!e.Reconcile(Entry("z", 2, "busy"), T0.AddSeconds(2)) && e.Count == 0, "left: an ended session is not brought back by the list");
+
+        var c = new SessionRegistry();
+        c.Reconcile(Entry("c", 3, "busy"), T0);
+        c.Clear();
+        Check(!c.Reconcile(Entry("c", 3, "busy"), T0.AddSeconds(1)) && c.Count == 0, "left: cleared pets are not brought back by the list");
+        Check(c.Reconcile(Entry("other", 4, "busy"), T0.AddSeconds(1)) && c.Count == 1, "left: other sessions are still discovered");
     }
 
     private static async Task ServerRoundTrip()
