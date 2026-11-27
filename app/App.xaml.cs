@@ -70,6 +70,9 @@ public partial class App : System.Windows.Application
         menu.Items.Add("テスト: 最新セッションを質問待ちにする", null, (_, __) => ApplyToLatestTest(NotifyEventKind.Ask));
         menu.Items.Add("テスト: 7件まとめて追加（あふれ確認）", null, (_, __) => { for (int i = 0; i < 7; i++) AddTestSession(); });
         menu.Items.Add("テスト: 全ペットを消す", null, (_, __) => _registry.Clear());
+        var flee = new WForms.ToolStripMenuItem("テスト: 大焦り（使用量 90% 超えのふり）") { CheckOnClick = true };
+        flee.CheckedChanged += (_, __) => { _testFlee = flee.Checked; CheckUsage(); };
+        menu.Items.Add(flee);
         menu.Items.Add("起動演出をもう一度", null, (_, __) => ShowSplash());
         menu.Items.Add("終了", null, (_, __) => Shutdown());
         return menu;
@@ -343,6 +346,8 @@ public partial class App : System.Windows.Application
     }
 
     private bool _fleeing;
+    /// <summary>Tray test switch: run away as if the usage were over the threshold.</summary>
+    private bool _testFlee;
 
     /// <summary>
     /// Read the 5-hour usage and tell the pets to run away when it has reached
@@ -361,12 +366,14 @@ public partial class App : System.Windows.Application
             }
         }
         catch (Exception ex) { LogOnce("usage check failed: " + ex.GetType().Name + ": " + ex.Message); }
+        if (_testFlee) flee = true; // the tray's test switch wins over the real usage
 
         if (flee != _fleeing)
         {
             _fleeing = flee;
             OrcaJump.Log("fleeing " + (flee ? "on" : "off") + " (5-hour usage " +
-                (used.HasValue ? used.Value.ToString("0.#") + "%" : "unknown") + ", threshold " + _config.FleeThreshold + "%)");
+                (used.HasValue ? used.Value.ToString("0.#") + "%" : "unknown") + ", threshold " + _config.FleeThreshold + "%" +
+                (_testFlee ? ", test switch on" : "") + ")");
         }
         _petBar?.SetFleeing(flee);
     }
