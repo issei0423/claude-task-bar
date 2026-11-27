@@ -25,14 +25,21 @@ public partial class App : System.Windows.Application
         _mutex = new Mutex(true, "ClaudeTaskBar_SingleInstance_v1", out bool created);
         if (!created) { Shutdown(); return; }
 
-        _petBar = new PetBarWindow(_registry, JumpToSession);
+        _config = AppConfig.Load();
+        _petBar = new PetBarWindow(_registry, JumpToSession, _config.PetScale);
         _registry.Changed += () => Dispatcher.BeginInvoke(new Action(() => _petBar?.Refresh()));
 
         _tray = new WForms.NotifyIcon { Icon = LoadTrayIcon(), Visible = true, Text = "claude-task-bar" };
         _tray.ContextMenuStrip = BuildTrayMenu();
         _tray.DoubleClick += (_, __) => AddTestSession();
 
-        _config = AppConfig.Load();
+        if (_petBar.LoadError != null)
+        {
+            // Without the pictures no pet can be drawn; say so instead of staying silent.
+            _tray.ShowBalloonTip(5000, "claude-task-bar",
+                "ペットの絵を読めませんでした。" + _petBar.LoadError, WForms.ToolTipIcon.Warning);
+        }
+
         _server = new NotifyServer(_config.Port, ev =>
             Dispatcher.BeginInvoke(new Action(() => HandleEvent(ev))));
         try { _server.Start(); }

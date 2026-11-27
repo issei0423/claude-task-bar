@@ -1,0 +1,617 @@
+<title>ドット絵 見本帳</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* 配置：上から「操作 → タスクバーの上での流れ → アニメ一覧 → コマ送り → 色」。主役は絵なので、枠は冷たい灰色で静かにする */
+:root {
+  --bg: #E6EAEE;
+  --panel: #F6F8FA;
+  --ink: #17202A;
+  --muted: #55626F;
+  --line: #C6CFD8;
+  --accent: #0E7F58;
+  --sw-dark-a: #1E2228;
+  --sw-dark-b: #262B32;
+  --sw-light-a: #E9ECF0;
+  --sw-light-b: #DCE1E7;
+  --font-display: "DotGothic16", "MS Gothic", "Osaka-Mono", monospace;
+  --font-body: "Zen Kaku Gothic New", "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-data: "DotGothic16", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151A; --panel: #192027; --ink: #E4E9EE; --muted: #94A2B0; --line: #2D3742; --accent: #6EE7A8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151A; --panel: #192027; --ink: #E4E9EE; --muted: #94A2B0; --line: #2D3742; --accent: #6EE7A8;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 980px; margin-inline: auto; display: grid; gap: 34px; }
+header { display: grid; gap: 8px; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.2; margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+h1 .ver { font-size: 13px; color: var(--muted); border: 1px solid var(--line); padding: 1px 8px; }
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 19px; line-height: 1.3; margin: 0; }
+p { margin: 0; max-width: 62ch; }
+.muted { color: var(--muted); font-size: 13.5px; }
+section { display: grid; gap: 12px; min-width: 0; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 14px 26px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); }
+.ctl { display: grid; gap: 5px; }
+.ctl > span { font-family: var(--font-display); font-size: 12px; color: var(--muted); letter-spacing: .06em; }
+.seg { display: inline-flex; flex-wrap: wrap; }
+.seg button, .btn {
+  font: inherit; font-size: 13.5px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); padding: 5px 12px; cursor: pointer; margin-left: -1px;
+}
+.seg button:first-child { margin-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); position: relative; }
+.btn { margin-left: 0; }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.stage { border: 1px solid var(--line); overflow: hidden; line-height: 0; }
+.stage canvas { display: block; width: 100%; height: 190px; }
+.legend { display: grid; gap: 4px; padding: 0; margin: 0; list-style: none; font-size: 13.5px; }
+.legend b { font-family: var(--font-display); font-weight: 400; }
+
+.sw { --a: var(--sw-dark-a); --b: var(--sw-dark-b);
+  background: repeating-conic-gradient(var(--a) 0 25%, var(--b) 0 50%) 0 0 / 16px 16px;
+  display: grid; place-items: center; }
+[data-bg="light"] .sw { --a: var(--sw-light-a); --b: var(--sw-light-b); }
+canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.card { font: inherit; color: var(--ink); text-align: left; background: var(--panel); border: 1px solid var(--line); padding: 0; cursor: pointer; display: grid; grid-template-rows: auto 1fr; }
+.card .sw { padding: 10px; height: 150px; }
+.card .txt { padding: 9px 12px 11px; display: grid; gap: 1px; align-content: start; }
+.card .nm { font-family: var(--font-display); font-size: 17px; line-height: 1.3; }
+.card .wh { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.card .mt { font-family: var(--font-data); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
+.card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card[aria-pressed="true"] .nm { color: var(--accent); }
+
+.detail { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 18px; align-items: start; }
+.detail .sw { padding: 12px; border: 1px solid var(--line); }
+.side { display: grid; gap: 12px; min-width: 0; }
+.readout { font-family: var(--font-data); font-size: 14px; font-variant-numeric: tabular-nums; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.fr { font: inherit; color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 0 0 2px; cursor: pointer; display: grid; justify-items: center; }
+.fr .sw { padding: 2px; }
+.fr span { font-family: var(--font-data); font-size: 11px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.fr[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--ink); }
+
+.pal { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 16px; margin: 0; padding: 0; list-style: none; }
+.pal li { display: grid; grid-template-columns: 22px auto 1fr; gap: 9px; align-items: center; font-size: 13px; }
+.pal i { width: 22px; height: 22px; border: 1px solid var(--line); display: block; }
+.pal code { font-family: var(--font-data); font-size: 12.5px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 24px; }
+  .detail { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<div class="wrap" id="app" data-bg="dark">
+  <header>
+    <h1>ドット絵 見本帳 <span class="ver">v0.1 下描き</span></h1>
+    <p>四角い子を 32×32 ドットで描き起こした最初の下描きです。直したい所は「絵柄」「アニメの名前」「コマ番号」で言ってください（例：B の「歩く」3コマ目、足をもっと上げる）。</p>
+  </header>
+
+  <div class="controls" role="group" aria-label="見え方の切り替え">
+    <div class="ctl"><span>絵柄</span>
+      <div class="seg" id="segStyle">
+        <button type="button" id="styleA" data-v="A">A 今の絵に忠実</button>
+        <button type="button" id="styleB" data-v="B">B 陰影つき</button>
+        <button type="button" id="styleC" data-v="C">C 目を大きく</button>
+      </div>
+    </div>
+    <div class="ctl"><span>背景</span>
+      <div class="seg" id="segBg">
+        <button type="button" id="bgDark" data-v="dark">暗い</button>
+        <button type="button" id="bgLight" data-v="light">明るい</button>
+      </div>
+    </div>
+    <div class="ctl"><span>タスクバーでの大きさ</span>
+      <div class="seg" id="segReal">
+        <button type="button" id="real2" data-v="2">2倍（64px）</button>
+        <button type="button" id="real3" data-v="3">3倍（96px）</button>
+      </div>
+    </div>
+    <div class="ctl"><span>動き</span>
+      <div class="seg" id="segSpeed">
+        <button type="button" id="play" data-v="toggle">止める</button>
+        <button type="button" id="sp025" data-v="0.25">0.25倍速</button>
+        <button type="button" id="sp05" data-v="0.5">0.5倍速</button>
+        <button type="button" id="sp1" data-v="1">等速</button>
+      </div>
+    </div>
+  </div>
+
+  <section aria-labelledby="h-stage">
+    <h2 id="h-stage">タスクバーの上での流れ</h2>
+    <p class="muted">実行中はその場で作業し、終わったり質問があるときに歩いて出てきます。大きさは実際の画面のピクセルに合わせてあります。</p>
+    <div class="stage"><canvas id="stage" aria-label="タスクバーの上を歩くペットの見本"></canvas></div>
+    <ul class="legend">
+      <li><b>右</b>　実行中。ノートPCで作業し続ける</li>
+      <li><b>中</b>　完了。歩いて出てきて跳ね、しばらくして戻る</li>
+      <li><b>左</b>　質問待ち。歩いて出てきて手を振り、しばらくして戻る</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="h-anims">
+    <h2 id="h-anims">アニメーション（5つ）</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section aria-labelledby="h-detail">
+    <h2 id="h-detail">コマ送り</h2>
+    <div class="detail">
+      <div class="sw"><canvas class="px" id="big" aria-label="選んだアニメの拡大"></canvas></div>
+      <div class="side">
+        <div class="readout" id="readout"></div>
+        <div class="row">
+          <button type="button" class="btn" id="prev">前のコマ</button>
+          <button type="button" class="btn" id="next">次のコマ</button>
+          <button type="button" class="btn" id="grid" aria-pressed="true">マス目</button>
+          <button type="button" class="btn" id="flip" aria-pressed="false">左向き</button>
+        </div>
+        <div class="strip" id="strip"></div>
+        <p class="muted" id="note"></p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-pal">
+    <h2 id="h-pal">色</h2>
+    <p class="muted">体・目・ふちは、いまの絵から取った色です。明るい面と影、ノートPC、コードの行、印の色は新しく足しました。</p>
+    <ul class="pal" id="pal"></ul>
+  </section>
+</div>
+
+<script id="engine">
+/* 絵を作る部分。DOM に触らないので、Node でも同じ絵が出せる */
+const SPR = (() => {
+  const W = 32, H = 32, GROUND = 30;
+  const PAL = {
+    o: ['#CC6D4A', '体'],
+    h: ['#E69370', '体の明るい面'],
+    s: ['#A4523A', '体の影'],
+    e: ['#141414', '目'],
+    w: ['#FFFFFF', '目の光'],
+    C: ['#FBF7F0', 'ふち（クリーム）'],
+    D: ['#3A1C13', 'ふち（こげ茶）'],
+    k: ['#20242B', 'ノートPC'],
+    K: ['#434B58', 'ノートPCの上の縁'],
+    b: ['#2E343D', 'ノートPCの台'],
+    l: ['#F4B896', '画面の照り返し'],
+    g: ['#6EE7A8', 'コードの行（新しい）'],
+    G: ['#2FA873', 'コードの行'],
+    d: ['#1E6E4E', 'コードの行（古い）'],
+    y: ['#FFC857', '？ときらめき'],
+    Y: ['#FFF1C2', 'きらめきの芯'],
+  };
+  const base = { BW: 18, BH: 14, LH: 4, eyeW: 2, eyeH: 4, eyeInset: 3, eyeTop: 3, sitBob: 2 };
+  const STYLES = {
+    A: Object.assign({}, base, { name: '今の絵に忠実', outline: 'C', nb: 8, shade: false, shine: false,
+      note: 'いまの 24×24 の絵と同じ作り。クリーム色のふち、べた塗り、縦長の目。' }),
+    B: Object.assign({}, base, { name: '陰影つき', outline: 'D', nb: 4, shade: true, shine: true,
+      note: 'こげ茶のふちで角を1ドット落とし、左上に明るい面、右下に影。目に光を1ドット。' }),
+    C: Object.assign({}, base, { name: '目を大きく', outline: 'D', nb: 4, shade: true, shine: true,
+      BW: 20, BH: 15, LH: 3, eyeW: 3, eyeH: 5, eyeTop: 4, sitBob: 1,
+      note: 'B の塗りのまま、体を少し大きく、足を短く、目を 3×5 に。幼い感じ。' }),
+  };
+
+  function draw(S, pose) {
+    const p = Object.assign({ x: 0, y: 0, bob: 0, wide: 0, tall: 0, legs: null, armL: null, armR: null,
+      eyes: 'open', eyeDx: 0, sit: false, laptop: false, glow: false, code: null,
+      mark: null, markDy: 0, sparks: 0 }, pose);
+    const main = new Array(W * H).fill(null), fx = new Array(W * H).fill(null);
+    const set = (g, x, y, c) => { if (x >= 0 && x < W && y >= 0 && y < H) g[y * W + x] = c; };
+    const rect = (g, x, y, w, h, c) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) set(g, x + i, y + j, c); };
+
+    const bob = p.sit ? S.sitBob : p.bob;
+    const BX0 = (W - S.BW) / 2 + p.x;          // 体の左端（つぶれる前）
+    const BX = BX0 - p.wide, BW = S.BW + p.wide * 2;
+    const feet = GROUND + p.y;                 // 足の裏のすぐ下の行
+    const bodyBottom = feet - S.LH + bob;      // 体のすぐ下の行
+    const top0 = bodyBottom - S.BH;            // 体の上端（伸びる前）
+    const bodyTop = top0 - p.tall;
+
+    // 足
+    if (p.sit) {
+      rect(main, BX0 - 2, feet - 2, 3, 2, 'o');
+      rect(main, BX0 + S.BW - 1, feet - 2, 3, 2, 'o');
+    } else {
+      const lx = [BX0 + 1, BX0 + 5, BX0 + S.BW - 7, BX0 + S.BW - 3];
+      const legs = p.legs || [0, 0, 0, 0];
+      for (let i = 0; i < 4; i++) {
+        const L = Array.isArray(legs[i]) ? { dx: legs[i][0], lift: legs[i][1] } : { dx: 0, lift: legs[i] };
+        const h = (feet - L.lift) - bodyBottom;
+        if (h > 0) rect(main, lx[i] + L.dx, bodyBottom, 2, h, (S.shade && (i === 1 || i === 2)) ? 's' : 'o');
+      }
+    }
+
+    // 体（上の2行だけ左右2ドットずつ狭い）
+    rect(main, BX + 2, bodyTop, BW - 4, 2, 'o');
+    rect(main, BX, bodyTop + 2, BW, bodyBottom - bodyTop - 2, 'o');
+    if (S.shade) {
+      rect(main, BX + 2, bodyTop, BW - 4, 1, 'h');
+      rect(main, BX, bodyTop + 2, 2, 1, 'h');
+      rect(main, BX + BW - 2, bodyTop + 2, 2, 1, 'h');
+      rect(main, BX, bodyTop + 3, 1, bodyBottom - bodyTop - 4, 'h');
+      rect(main, BX + BW - 1, bodyTop + 3, 1, bodyBottom - bodyTop - 3, 's');
+      rect(main, BX, bodyBottom - 1, BW, 1, 's');
+    }
+
+    // 腕
+    const armY = top0 + 6;
+    const arm = (side, a) => {
+      a = Object.assign({ dy: 0, up: false, hand: 0 }, a);
+      const x0 = side < 0 ? BX - 2 : BX + BW;
+      if (!a.up) {
+        rect(main, x0, armY + a.dy, 2, 3, 'o');
+        if (S.shade) rect(main, x0, armY + a.dy + 2, 2, 1, 's');
+      } else {
+        const hx = x0 + side * (1 + a.hand);
+        rect(main, x0, armY - 1, 2, 2, 'o');
+        rect(main, hx, armY - 5, 2, 4, 'o');
+        if (S.shade) rect(main, hx, armY - 5, 2, 1, 'h');
+      }
+    };
+    arm(-1, p.armL); arm(1, p.armR);
+
+    // 目
+    const eyeY = top0 + S.eyeTop;
+    const exL = BX0 + S.eyeInset + p.eyeDx;
+    const exR = BX0 + S.BW - S.eyeInset - S.eyeW + p.eyeDx;
+    for (const ex of [exL, exR]) {
+      if (p.eyes === 'blink') {
+        rect(main, ex, eyeY + (S.eyeH >> 1), S.eyeW, 1, 'e');
+      } else if (p.eyes === 'happy') {
+        const m = eyeY + 1;
+        if (S.eyeW === 2) { set(main, ex - 1, m + 1, 'e'); set(main, ex, m, 'e'); set(main, ex + 1, m, 'e'); set(main, ex + 2, m + 1, 'e'); }
+        else { set(main, ex - 1, m + 2, 'e'); set(main, ex, m + 1, 'e'); set(main, ex + 1, m, 'e'); set(main, ex + 2, m + 1, 'e'); set(main, ex + 3, m + 2, 'e'); }
+      } else if (p.eyes === 'down') {
+        rect(main, ex, eyeY + 2, S.eyeW, S.eyeH - 2, 'e');
+      } else {
+        rect(main, ex, eyeY, S.eyeW, S.eyeH, 'e');
+        if (S.shine) set(main, ex, eyeY, 'w');
+      }
+    }
+
+    // ノートPC（こちらに背を向けている。目だけが上からのぞく）
+    if (p.laptop) {
+      const lidTop = eyeY + S.eyeH + 1, lidX = 10 + p.x, lidW = 12, baseY = feet - 2;
+      if (p.glow) rect(main, lidX, lidTop - 1, lidW, 1, 'l');
+      rect(main, lidX, lidTop, lidW, baseY - lidTop, 'k');
+      rect(main, lidX, lidTop, lidW, 1, 'K');
+      rect(main, 15 + p.x, lidTop + ((baseY - lidTop) >> 1), 2, 2, 'C');
+      rect(main, lidX - 2, baseY, lidW + 4, 2, 'b');
+    }
+    // 頭の上に流れるコードの行（1行ずつ打たれて、上へ送られる）
+    if (p.code != null) {
+      const LEN = [5, 3, 6, 4], IND = [0, 2, 2, 0];
+      const li = Math.floor(p.code / 3), grow = p.code % 3;
+      for (let k = 0; k < 3; k++) {
+        const idx = (((li - k) % 4) + 4) % 4;
+        const len = k === 0 ? Math.ceil(LEN[idx] * (grow + 1) / 3) : LEN[idx];
+        rect(fx, 12 + IND[idx] + p.x, bodyTop - 3 - k * 2, len, 1, k === 0 ? 'g' : k === 1 ? 'G' : 'd');
+      }
+    }
+
+    // ？の印（ふちは絵柄によらず濃い色。クリームのふちだと黄色が埋もれるため）
+    const mk = new Array(W * H).fill(null);
+    if (p.mark === '?') {
+      const Q = ['.###.', '#...#', '....#', '...#.', '..#..', '.....', '..#..'];
+      Q.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] === '#') set(mk, 14 + i + p.x, 2 + j + p.markDy, 'y'); });
+    }
+    // きらめき
+    if (p.sparks) {
+      [[2, 3], [29, 2], [1, 14], [30, 12]].forEach(([sx, sy], i) => {
+        set(fx, sx, sy, 'Y');
+        if ((i + p.sparks) % 2 === 0) { set(fx, sx - 1, sy, 'y'); set(fx, sx + 1, sy, 'y'); set(fx, sx, sy - 1, 'y'); set(fx, sx, sy + 1, 'y'); }
+      });
+    }
+
+    // ふちを付ける（塗った所の隣の、空いたドット）
+    const out = main.slice();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (main[y * W + x]) continue;
+      let hit = false;
+      for (let dy = -1; dy <= 1 && !hit; dy++) for (let dx = -1; dx <= 1 && !hit; dx++) {
+        if (!dx && !dy) continue;
+        if (S.nb === 4 && dx && dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < W && ny >= 0 && ny < H && main[ny * W + nx]) hit = true;
+      }
+      if (hit) out[y * W + x] = S.outline;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (mk[y * W + x]) { out[y * W + x] = mk[y * W + x]; continue; }
+      if (out[y * W + x]) continue;
+      let hit = false;
+      for (let dy = -1; dy <= 1 && !hit; dy++) for (let dx = -1; dx <= 1 && !hit; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if ((dx || dy) && nx >= 0 && nx < W && ny >= 0 && ny < H && mk[ny * W + nx]) hit = true;
+      }
+      if (hit) out[y * W + x] = 'D';
+    }
+    for (let i = 0; i < W * H; i++) if (fx[i]) out[i] = fx[i];
+    return out;
+  }
+
+  const up = (hand = 0) => ({ up: true, hand });
+  const ANIMS = [
+    { id: 'typing', name: '作業', when: '実行中。その場でノートPCを叩く',
+      note: '腕が1コマおきに交互に上がり、目は画面を左から右へ追います。頭の上をコードの行が流れます。11コマ目でまばたき。',
+      frames: Array.from({ length: 12 }, (_, f) => ({ ms: 95, p: {
+        sit: true, laptop: true, glow: f % 6 !== 5, code: f,
+        eyes: f === 10 ? 'blink' : 'down', eyeDx: [-1, -1, -1, 0, 0, 0, 1, 1, 1, 0, 0, 0][f],
+        armL: { dy: f % 2 ? 0 : -1 }, armR: { dy: f % 2 ? -1 : 0 } } })) },
+    { id: 'walk', name: '歩く', when: '知らせに出てくるとき、戻るとき',
+      note: '4本足を2本ずつ交互に出す横歩き。足が着くコマ（1・4）で体が1ドット沈みます。目は進む向きへ1ドット寄せています。',
+      frames: [
+        { ms: 90, p: { bob: 1, legs: [[1, 0], [-1, 0], [1, 0], [-1, 0]], eyeDx: 1 } },
+        { ms: 90, p: { legs: [[0, 0], [0, 1], [0, 0], [0, 1]], eyeDx: 1, armL: { dy: -1 }, armR: { dy: 1 } } },
+        { ms: 90, p: { legs: [[-1, 0], [1, 2], [-1, 0], [1, 2]], eyeDx: 1, armL: { dy: -1 }, armR: { dy: 1 } } },
+        { ms: 90, p: { bob: 1, legs: [[-1, 0], [1, 0], [-1, 0], [1, 0]], eyeDx: 1 } },
+        { ms: 90, p: { legs: [[0, 1], [0, 0], [0, 1], [0, 0]], eyeDx: 1, armL: { dy: 1 }, armR: { dy: -1 } } },
+        { ms: 90, p: { legs: [[1, 2], [-1, 0], [1, 2], [-1, 0]], eyeDx: 1, armL: { dy: 1 }, armR: { dy: -1 } } },
+      ] },
+    { id: 'done', name: '完了', when: '終わったよー！ と跳ねて喜ぶ',
+      note: '沈む（1）→ 伸びて踏み切る（2）→ 空中（3〜5、いちばん高い所で 8 ドット）→ 着地で沈む（7）→ ばんざいで止まる（8）。',
+      frames: [
+        { ms: 130, p: { bob: 2, wide: 1 } },
+        { ms: 70, p: { y: -2, tall: 2, wide: -1, eyes: 'happy', armL: up(), armR: up() } },
+        { ms: 80, p: { y: -6, eyes: 'happy', armL: up(), armR: up(), legs: [1, 1, 1, 1] } },
+        { ms: 120, p: { y: -8, eyes: 'happy', armL: up(1), armR: up(1), legs: [1, 2, 2, 1], sparks: 1 } },
+        { ms: 80, p: { y: -6, eyes: 'happy', armL: up(), armR: up(), legs: [1, 1, 1, 1], sparks: 2 } },
+        { ms: 70, p: { y: -2, tall: 2, wide: -1, eyes: 'happy', armL: up(), armR: up() } },
+        { ms: 130, p: { bob: 2, wide: 1, eyes: 'happy' } },
+        { ms: 320, p: { eyes: 'happy', armL: up(1), armR: up(1), sparks: 1 } },
+      ] },
+    { id: 'ask', name: '質問待ち', when: '聞きたいことがある！ と手を振る',
+      note: '右手を上げて左右に振り、頭の上の「？」が1ドット上下します。7コマ目でまばたき。',
+      frames: Array.from({ length: 8 }, (_, f) => ({ ms: 125, p: {
+        bob: [0, 0, 1, 1, 0, 0, 1, 1][f], armR: up([0, 1, 0, -1, 0, 1, 0, -1][f]),
+        eyes: f === 6 ? 'blink' : 'open', mark: '?', markDy: [0, 0, -1, -1, 0, 0, -1, -1][f] } })) },
+    { id: 'idle', name: '立ち', when: '歩きの合間、何もないとき',
+      note: '体が1ドット沈んで戻る、ゆっくりした呼吸。5コマ目でまばたき。',
+      frames: [
+        { ms: 650, p: {} }, { ms: 650, p: { bob: 1 } }, { ms: 650, p: {} },
+        { ms: 420, p: { bob: 1 } }, { ms: 90, p: { bob: 1, eyes: 'blink' } }, { ms: 160, p: { bob: 1 } },
+      ] },
+  ];
+
+  const byId = Object.fromEntries(ANIMS.map(a => [a.id, a]));
+  const cache = new Map();
+  function grid(styleKey, animId, i, flipX) {
+    const key = styleKey + '|' + animId + '|' + i + '|' + (flipX ? 1 : 0);
+    if (cache.has(key)) return cache.get(key);
+    let g = draw(STYLES[styleKey], byId[animId].frames[i].p);
+    if (flipX) { const f = new Array(W * H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) f[y * W + x] = g[y * W + (W - 1 - x)]; g = f; }
+    cache.set(key, g);
+    return g;
+  }
+  return { W, H, GROUND, PAL, STYLES, ANIMS, byId, grid };
+})();
+if (typeof module !== 'undefined') module.exports = SPR;
+</script>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const app = $('app');
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const state = { style: 'A', bg: 'dark', real: 2, anim: 'typing', speed: 1, playing: !reduce, frame: 0, grid: true, flip: false };
+  try {
+    const saved = JSON.parse(localStorage.getItem('spritebook.v1') || 'null');
+    if (saved) for (const k of ['style', 'bg', 'real', 'anim']) if (saved[k] != null) state[k] = saved[k];
+    if (!SPR.STYLES[state.style]) state.style = 'A';
+    if (!SPR.byId[state.anim]) state.anim = 'typing';
+  } catch (e) {}
+  const save = () => { try { localStorage.setItem('spritebook.v1', JSON.stringify({ style: state.style, bg: state.bg, real: state.real, anim: state.anim })); } catch (e) {} };
+
+  const RGB = {};
+  for (const k in SPR.PAL) { const h = SPR.PAL[k][0]; RGB[k] = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+  const fcache = new Map();
+  function frameCanvas(style, animId, i, flip) {
+    const key = style + '|' + animId + '|' + i + '|' + (flip ? 1 : 0);
+    let c = fcache.get(key);
+    if (c) return c;
+    const g = SPR.grid(style, animId, i, flip);
+    c = document.createElement('canvas'); c.width = SPR.W; c.height = SPR.H;
+    const ctx = c.getContext('2d'), img = ctx.createImageData(SPR.W, SPR.H);
+    for (let n = 0; n < g.length; n++) if (g[n]) { const [r, gg, b] = RGB[g[n]]; img.data[n * 4] = r; img.data[n * 4 + 1] = gg; img.data[n * 4 + 2] = b; img.data[n * 4 + 3] = 255; }
+    ctx.putImageData(img, 0, 0);
+    fcache.set(key, c);
+    return c;
+  }
+  const total = a => a.frames.reduce((s, f) => s + f.ms, 0);
+  function frameAt(a, t) {
+    t = ((t % total(a)) + total(a)) % total(a);
+    for (let i = 0; i < a.frames.length; i++) { if (t < a.frames[i].ms) return i; t -= a.frames[i].ms; }
+    return 0;
+  }
+  const dpr = () => window.devicePixelRatio || 1;
+  // 1ドットを画面の整数ピクセルで描く（倍率が半端だとにじむため）
+  function fit(canvas, cssScale) {
+    const k = Math.max(1, Math.round(cssScale * dpr()));
+    if (canvas.width !== SPR.W * k) { canvas.width = SPR.W * k; canvas.height = SPR.H * k; }
+    canvas.style.width = (SPR.W * k / dpr()) + 'px';
+    canvas.style.height = (SPR.H * k / dpr()) + 'px';
+    return k;
+  }
+  function paint(canvas, k, src, withGrid) {
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(src, 0, 0, SPR.W * k, SPR.H * k);
+    if (withGrid && k >= 6) {
+      ctx.fillStyle = state.bg === 'dark' ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.10)';
+      for (let i = 1; i < SPR.W; i++) { ctx.fillRect(i * k, 0, 1, canvas.height); ctx.fillRect(0, i * k, canvas.width, 1); }
+      ctx.fillStyle = state.bg === 'dark' ? 'rgba(110,231,168,.55)' : 'rgba(14,127,88,.55)';
+      ctx.fillRect(0, SPR.GROUND * k, canvas.width, 1);   // 地面（足の裏）の線
+    }
+  }
+
+  // ── 操作 ──
+  function seg(id, get, set) {
+    const root = $(id);
+    const sync = () => root.querySelectorAll('button').forEach(b => { if (b.dataset.v !== 'toggle') b.setAttribute('aria-pressed', String(String(get()) === b.dataset.v)); });
+    root.addEventListener('click', e => { const b = e.target.closest('button'); if (!b || b.dataset.v === 'toggle') return; set(b.dataset.v); sync(); save(); });
+    sync();
+    return sync;
+  }
+  seg('segStyle', () => state.style, v => { state.style = v; buildStrip(); });
+  seg('segBg', () => state.bg, v => { state.bg = v; app.dataset.bg = v; });
+  seg('segReal', () => state.real, v => { state.real = Number(v); });
+  seg('segSpeed', () => state.speed, v => { state.speed = Number(v); });
+  app.dataset.bg = state.bg;
+  const playBtn = $('play');
+  const syncPlay = () => { playBtn.textContent = state.playing ? '止める' : '動かす'; };
+  playBtn.addEventListener('click', () => { state.playing = !state.playing; syncPlay(); });
+  syncPlay();
+
+  // ── アニメ一覧 ──
+  const cards = $('cards'), cardCv = {};
+  SPR.ANIMS.forEach(a => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'card'; b.id = 'card-' + a.id;
+    b.innerHTML = '<div class="sw"><canvas class="px"></canvas></div><div class="txt"><span class="nm"></span><span class="wh"></span><span class="mt"></span></div>';
+    b.querySelector('.nm').textContent = a.name;
+    b.querySelector('.wh').textContent = a.when;
+    b.querySelector('.mt').textContent = a.frames.length + 'コマ・1周 ' + (total(a) / 1000).toFixed(2) + '秒';
+    b.addEventListener('click', () => { state.anim = a.id; state.frame = 0; syncCards(); buildStrip(); save(); });
+    cards.appendChild(b);
+    cardCv[a.id] = b.querySelector('canvas');
+  });
+  const syncCards = () => SPR.ANIMS.forEach(a => $('card-' + a.id).setAttribute('aria-pressed', String(a.id === state.anim)));
+  syncCards();
+
+  // ── コマ送り ──
+  const big = $('big'), strip = $('strip'), readout = $('readout'), note = $('note');
+  let stripBtns = [];
+  function buildStrip() {
+    const a = SPR.byId[state.anim];
+    strip.textContent = ''; stripBtns = [];
+    a.frames.forEach((f, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'fr'; b.setAttribute('aria-label', (i + 1) + 'コマ目');
+      b.innerHTML = '<div class="sw"><canvas class="px"></canvas></div><span></span>';
+      b.querySelector('span').textContent = (i + 1) + '・' + f.ms;
+      const cv = b.querySelector('canvas');
+      paint(cv, fit(cv, 1.5), frameCanvas(state.style, a.id, i, state.flip), false);
+      b.addEventListener('click', () => { state.playing = false; state.frame = i; syncPlay(); });
+      strip.appendChild(b); stripBtns.push(b);
+    });
+    note.textContent = SPR.STYLES[state.style].note + ' ／ ' + a.note;
+  }
+  const step = d => { const a = SPR.byId[state.anim]; state.playing = false; state.frame = (state.frame + d + a.frames.length) % a.frames.length; syncPlay(); };
+  $('prev').addEventListener('click', () => step(-1));
+  $('next').addEventListener('click', () => step(1));
+  $('grid').addEventListener('click', e => { state.grid = !state.grid; e.currentTarget.setAttribute('aria-pressed', String(state.grid)); });
+  $('flip').addEventListener('click', e => { state.flip = !state.flip; e.currentTarget.setAttribute('aria-pressed', String(state.flip)); buildStrip(); });
+  buildStrip();
+
+  // ── 色 ──
+  const pal = $('pal');
+  for (const k in SPR.PAL) {
+    const li = document.createElement('li');
+    li.innerHTML = '<i></i><code></code><span></span>';
+    li.querySelector('i').style.background = SPR.PAL[k][0];
+    li.querySelector('code').textContent = SPR.PAL[k][0];
+    li.querySelector('span').textContent = SPR.PAL[k][1];
+    pal.appendChild(li);
+  }
+
+  // ── タスクバーの上での流れ ──
+  const stage = $('stage');
+  const pets = [
+    { home: 0.88, to: 0.88, kind: 'stay', st: 'typing', t: 0, at: 0, x: null, dir: -1 },
+    { home: 0.72, to: 0.50, kind: 'done', st: 'typing', t: 2600, at: 300, x: null, dir: -1 },
+    { home: 0.56, to: 0.30, kind: 'ask', st: 'typing', t: 0, at: 700, x: null, dir: -1 },
+  ];
+  const SAY = { done: '終わったよー！', ask: '聞きたいことがある！' };
+  function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r); ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r); ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r); ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath(); }
+  function drawStage(dt) {
+    const d = dpr(), cssW = stage.clientWidth, cssH = stage.clientHeight;
+    const Wd = Math.round(cssW * d), Hd = Math.round(cssH * d);
+    if (stage.width !== Wd || stage.height !== Hd) { stage.width = Wd; stage.height = Hd; pets.forEach(p => { p.x = null; }); }
+    const ctx = stage.getContext('2d'); ctx.imageSmoothingEnabled = false;
+    const dark = state.bg === 'dark', tb = Math.round(48 * d), top = Hd - tb;
+    ctx.fillStyle = dark ? '#27364A' : '#B7CBE1'; ctx.fillRect(0, 0, Wd, top);
+    ctx.fillStyle = dark ? '#2E4059' : '#C6D7E9'; ctx.fillRect(0, Math.round(top * 0.58), Wd, top - Math.round(top * 0.58));
+    ctx.fillStyle = dark ? '#1C1F24' : '#EEF0F3'; ctx.fillRect(0, top, Wd, tb);
+    ctx.fillStyle = dark ? '#30353D' : '#D5DAE0'; ctx.fillRect(0, top, Wd, Math.max(1, Math.round(d)));
+    const s = Math.round(26 * d), gap = Math.round(12 * d), n = cssW < 520 ? 4 : 7;
+    const cols = ['#4C8DF6', '#F2B84B', '#58B368', '#D8DCE2', '#C8553D', '#8E7CF3', '#43B5C4'];
+    const x0 = Math.round((Wd - (n * s + (n - 1) * gap)) / 2), y0 = top + Math.round((tb - s) / 2);
+    ctx.globalAlpha = dark ? 0.85 : 0.9;
+    for (let i = 0; i < n; i++) { ctx.fillStyle = cols[i]; rr(ctx, x0 + i * (s + gap), y0, s, s, 6 * d); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    const now = new Date(), pad = v => String(v).padStart(2, '0');
+    ctx.fillStyle = dark ? '#C9CED6' : '#39414B'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    ctx.font = Math.round(11 * d) + 'px "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif';
+    ctx.fillText(pad(now.getHours()) + ':' + pad(now.getMinutes()), Wd - 12 * d, top + tb / 2 - 2 * d);
+    ctx.fillText(now.getFullYear() + '/' + pad(now.getMonth() + 1) + '/' + pad(now.getDate()), Wd - 12 * d, top + tb / 2 + 12 * d);
+
+    const k = state.real * Math.max(1, Math.round(d / 1.25));
+    const v = 34 * d / 1000;
+    for (const p of pets) {
+      const home = p.home * Wd, to = p.to * Wd;
+      if (p.x == null) p.x = home;
+      p.t += dt; p.at += dt;
+      if (p.st === 'typing') { if (p.kind !== 'stay' && p.t > 5200) { p.st = 'go'; p.t = 0; p.dir = Math.sign(to - home) || -1; } }
+      else if (p.st === 'go') { p.x += p.dir * v * dt; if ((p.dir < 0 && p.x <= to) || (p.dir > 0 && p.x >= to)) { p.x = to; p.st = p.kind; p.t = 0; p.at = 0; } }
+      else if (p.st === 'done' || p.st === 'ask') { if (p.t > 4600) { p.st = 'back'; p.t = 0; p.dir = Math.sign(home - to) || 1; } }
+      else if (p.st === 'back') { p.x += p.dir * v * dt; if ((p.dir < 0 && p.x <= home) || (p.dir > 0 && p.x >= home)) { p.x = home; p.st = 'typing'; p.t = 0; } }
+      const id = (p.st === 'go' || p.st === 'back') ? 'walk' : p.st;
+      const a = SPR.byId[id], fi = frameAt(a, p.at);
+      const src = frameCanvas(state.style, id, fi, id === 'walk' && p.dir < 0);
+      const px = Math.round(p.x - 16 * k), py = top - 31 * k;
+      ctx.drawImage(src, px, py, 32 * k, 32 * k);
+      if (SAY[p.st]) {
+        ctx.font = '700 ' + Math.round(11 * d) + 'px "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(SAY[p.st]).width, bw = tw + 14 * d, bh = 20 * d;
+        const bx = Math.max(4 * d, Math.min(Wd - bw - 4 * d, p.x - bw / 2)), by = Math.max(2 * d, py - bh - 2 * d);
+        rr(ctx, bx, by, bw, bh, 7 * d); ctx.fillStyle = '#FAF6EE'; ctx.fill();
+        ctx.lineWidth = Math.max(1, 1.5 * d); ctx.strokeStyle = '#7A3B28'; ctx.stroke();
+        ctx.fillStyle = '#2B2320'; ctx.fillText(SAY[p.st], bx + bw / 2, by + bh / 2 + d);
+      }
+    }
+  }
+
+  // ── 描画の繰り返し ──
+  let clock = 0, last = performance.now();
+  function tick(nowT) {
+    const dt = Math.min(100, nowT - last) * (state.playing ? state.speed : 0);
+    last = nowT; clock += dt;
+    for (const a of SPR.ANIMS) {
+      const cv = cardCv[a.id];
+      paint(cv, fit(cv, 4), frameCanvas(state.style, a.id, frameAt(a, clock), false), false);
+    }
+    const a = SPR.byId[state.anim];
+    if (state.playing) state.frame = frameAt(a, clock);
+    const narrow = app.clientWidth < 560;
+    paint(big, fit(big, narrow ? Math.max(6, Math.floor((app.clientWidth - 28) / 32)) : 11), frameCanvas(state.style, a.id, state.frame, state.flip), state.grid);
+    stripBtns.forEach((b, i) => b.setAttribute('aria-current', String(i === state.frame)));
+    readout.textContent = state.style + '・' + a.name + '　コマ ' + (state.frame + 1) + ' / ' + a.frames.length + '　' + a.frames[state.frame].ms + 'ms';
+    drawStage(dt);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
