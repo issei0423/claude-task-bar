@@ -19,6 +19,8 @@ public sealed class LiveSessionEntry
     /// <summary>When the process started, as a Windows FILETIME (UTC). Null when the file did not say.</summary>
     public long? ProcStartFileTime { get; init; }
     public DateTimeOffset? UpdatedAt { get; init; }
+    /// <summary>When the status last changed (statusUpdatedAt). Null when the file did not say.</summary>
+    public DateTimeOffset? StatusUpdatedAt { get; init; }
 }
 
 /// <summary>
@@ -58,13 +60,8 @@ public static class LiveSessions
                     procStart = b;
             }
 
-            DateTimeOffset? updatedAt = null;
-            if (root.TryGetProperty("updatedAt", out var up) && up.ValueKind == JsonValueKind.Number &&
-                up.TryGetInt64(out var ms))
-            {
-                try { updatedAt = DateTimeOffset.FromUnixTimeMilliseconds(ms); }
-                catch (ArgumentOutOfRangeException) { }
-            }
+            var updatedAt = UnixMs(root, "updatedAt");
+            var statusUpdatedAt = UnixMs(root, "statusUpdatedAt");
 
             return new LiveSessionEntry
             {
@@ -75,6 +72,7 @@ public static class LiveSessions
                 Status = Str(root, "status"),
                 ProcStartFileTime = procStart,
                 UpdatedAt = updatedAt,
+                StatusUpdatedAt = statusUpdatedAt,
             };
         }
         catch
@@ -82,6 +80,31 @@ public static class LiveSessions
             return null;
         }
     }
+
+    /// <summary>A Unix-milliseconds number field, or null (missing, not a number, out of range).</summary>
+    private static DateTimeOffset? UnixMs(JsonElement root, string name)
+    {
+        if (root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var ms))
+        {
+            try { return DateTimeOffset.FromUnixTimeMilliseconds(ms); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// What the list's status means for a pet: busy / shell -> Running (working),
+    /// waiting -> Asking (waiting for the user), idle -> DoneSeen (at rest).
+    /// Anything else, or empty, -> null (do not use it). Case is ignored.
+    /// </summary>
+    public static SessionStatus? MapStatus(string? status) =>
+        (status ?? "").Trim().ToLowerInvariant() switch
+        {
+            "busy" or "shell" => SessionStatus.Running,
+            "waiting" => SessionStatus.Asking,
+            "idle" => SessionStatus.DoneSeen,
+            _ => null,
+        };
 
     private static string Str(JsonElement root, string name) =>
         root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";

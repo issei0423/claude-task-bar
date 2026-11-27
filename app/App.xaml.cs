@@ -108,15 +108,94 @@ public partial class App : System.Windows.Application
     /// </summary>
     private void HandleEvent(NotifyEvent ev)
     {
+        // "Claude is waiting for you" that arrives while Claude's own list says the
+        // session is idle is the reminder sent after a long wait (idle_prompt), not a
+        // question: do not call the user over for it.
+        if (ev.Kind == NotifyEventKind.Ask && ev.Pid >= 1 && ListSaysIdle(ev))
+        {
+            LogOnce("ask ignored: " + ev.Source + " is idle");
+            return;
+        }
+
         _registry.Apply(ev, DateTimeOffset.Now);
         // The hook's own hwnd (a parent-process guess) was just stored; replace it
         // with the console's window.
         if (ev.Pid >= 1 && ev.Kind != NotifyEventKind.Ended)
             ApplyConsoleWindow(ev.EffectiveId, ev.Source, ev.Pid);
-        // Look right away, while the process that sent the event is surely
-        // alive: SessionLiveness only judges a pid it has seen alive, and the
-        // 5-second tick alone would miss a session that ends within seconds.
-        if (ev.Pid >= 1) CheckSessions();
+        // Look at the list right away: its status may already be newer than this
+        // event, and the process that sent the event is surely alive now
+        // (SessionLiveness only judges a pid it has seen alive, and the 5-second tick
+        // alone would miss a session that ends within seconds).
+        CheckSessions();
+    }
+
+    /// <summary>
+    /// Does the list file of this event's pid belong to the same session and say
+    /// "idle"? False when the file is missing, unreadable, of another session, or
+    /// not idle.
+    /// </summary>
+    private static bool ListSaysIdle(NotifyEvent ev)
+    {
+        try
+        {
+            var path = Path.Combine(LiveSessions.DefaultDir(), ev.Pid + ".json");
+            if (!File.Exists(path)) return false;
+            string text;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var rd = new StreamReader(fs))
+                text = rd.ReadToEnd();
+            var entry = LiveSessions.Parse(text);
+            return entry != null &&
+                   entry.SessionId == ev.EffectiveId &&
+                   string.Equals(entry.Status.Trim(), "idle", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    private FileSystemWatcher? _listWatcher;
+    private DispatcherTimer? _listDebounce;
+
+    /// <summary>
+    /// Look at the list as soon as a file in it is written (many writes come in a
+    /// row, so they are gathered for 150 ms). The 5-second timer stays as the
+    /// fallback; if the folder cannot be watched, only that timer runs.
+    /// </summary>
+    private void StartWatchingList()
+    {
+        try
+        {
+            var dir = LiveSessions.DefaultDir();
+            if (!Directory.Exists(dir))
+            {
+                LogOnce("session list folder not found; checking every 5 seconds only: " + dir);
+                return;
+            }
+            _listDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+            _listDebounce.Tick += (_, __) =>
+            {
+                _listDebounce.Stop();
+                CheckSessions();
+            };
+
+            var w = new FileSystemWatcher(dir, "*.json")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            };
+            // Called on a watcher thread: hand over to the UI thread.
+            void Kick()
+            {
+                try { Dispatcher.BeginInvoke(new Action(() => { if (_listDebounce is { IsEnabled: false }) _listDebounce.Start(); })); }
+                catch { }
+            }
+            w.Changed += (_, __) => Kick();
+            w.Created += (_, __) => Kick();
+            w.Deleted += (_, __) => Kick();
+            w.Renamed += (_, __) => Kick();
+            w.Error += (_, a) => LogOnce("session list watcher error: " + a.GetException().Message);
+            w.EnableRaisingEvents = true;
+            _listWatcher = w;
+        }
+        catch (Exception ex) { LogOnce("session list watcher failed: " + ex.GetType().Name + ": " + ex.Message); }
     }
 
     private void JumpToSession(SessionInfo s)
@@ -258,6 +337,7 @@ public partial class App : System.Windows.Application
         _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _watch.Tick += (_, __) => CheckSessions();
         _watch.Start();
+        StartWatchingList();
     }
 
     private void CheckSessions()
@@ -433,6 +513,12 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         _watch?.Stop();
+        _listDebounce?.Stop();
+        if (_listWatcher != null)
+        {
+            try { _listWatcher.EnableRaisingEvents = false; _listWatcher.Dispose(); } catch { }
+            _listWatcher = null;
+        }
         _server?.Stop();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         base.OnExit(e);

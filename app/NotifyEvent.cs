@@ -35,6 +35,25 @@ public sealed class NotifyEvent
     /// 0 when unknown. Only the JSON route carries it.
     /// </summary>
     public int Pid { get; init; }
+    /// <summary>
+    /// When the event happened (the hook's own clock, "ts"); null when it did not
+    /// say or said something unreadable. Only the JSON route carries it.
+    /// </summary>
+    public DateTimeOffset? At { get; init; }
+
+    /// <summary>
+    /// Unix milliseconds as plain digits ("1795755162578") -> time. Null for
+    /// anything else: empty, negative, letters, a fraction, out of range.
+    /// </summary>
+    public static DateTimeOffset? ParseAt(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        foreach (var c in text) if (c < '0' || c > '9') return null;
+        if (!long.TryParse(text, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var ms)) return null;
+        try { return DateTimeOffset.FromUnixTimeMilliseconds(ms); }
+        catch (ArgumentOutOfRangeException) { return null; }
+    }
 
     /// <summary>"1234" -> 1234. Anything that is not plain digits, or is below 1 or too big, is 0.</summary>
     public static int ParsePid(string? text)
@@ -100,6 +119,7 @@ public sealed class NotifyEvent
                 Surface = Get("surface"),
                 OrcaTerminal = OrcaJump.IsValidHandle(orcaTerminal) ? orcaTerminal : "",
                 Pid = ParsePid(Get("pid")),
+                At = ParseAt(Get("ts")),
             };
         }
         catch
