@@ -108,6 +108,10 @@ public partial class App : System.Windows.Application
     private void HandleEvent(NotifyEvent ev)
     {
         _registry.Apply(ev, DateTimeOffset.Now);
+        // Look right away, while the process that sent the event is surely
+        // alive: SessionLiveness only judges a pid it has seen alive, and the
+        // 5-second tick alone would miss a session that ends within seconds.
+        if (ev.Pid >= 1) CheckSessions();
     }
 
     private void JumpToSession(SessionInfo s)
@@ -148,16 +152,18 @@ public partial class App : System.Windows.Application
     private void StartWatchingSessions()
     {
         _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _watch.Tick += (_, __) =>
-        {
-            try
-            {
-                foreach (var id in _liveness.FindGone(_registry.Snapshot(), ProcessStart, WindowExists))
-                    _registry.Dismiss(id);
-            }
-            catch (Exception ex) { OrcaJump.Log("session watch failed: " + ex.GetType().Name + ": " + ex.Message); }
-        };
+        _watch.Tick += (_, __) => CheckSessions();
         _watch.Start();
+    }
+
+    private void CheckSessions()
+    {
+        try
+        {
+            foreach (var id in _liveness.FindGone(_registry.Snapshot(), ProcessStart, WindowExists))
+                _registry.Dismiss(id);
+        }
+        catch (Exception ex) { OrcaJump.Log("session watch failed: " + ex.GetType().Name + ": " + ex.Message); }
     }
 
     private static DateTime? ProcessStart(int pid)
