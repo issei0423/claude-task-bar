@@ -38,6 +38,7 @@ if (-not $type) {
 
 # Walk the process tree: find the owning window handle + detect IDE vs terminal.
 $hwnd = 0
+$claudePid = 0   # nearest ancestor named claude / node: the app watches it to see the session is gone
 $surface = 'terminal'
 $ideNames = @('code','cursor','devenv','idea','idea64','pycharm','pycharm64','rider','rider64','webstorm','webstorm64','goland','clion','windsurf','fleet')
 try {
@@ -45,6 +46,7 @@ try {
   for ($i = 0; $i -lt 12; $i++) {
     $p = Get-Process -Id $cpid -ErrorAction Stop
     if ($ideNames -contains $p.ProcessName.ToLower()) { $surface = 'ide' }
+    if ($claudePid -eq 0 -and $i -gt 0 -and @('claude','node') -contains $p.ProcessName.ToLower()) { $claudePid = [int]$p.Id }
     if ($hwnd -eq 0 -and $p.MainWindowHandle -ne 0) { $hwnd = [int64]$p.MainWindowHandle }
     $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$cpid" -ErrorAction Stop).ParentProcessId
     if (-not $parent -or $parent -eq 0) { break }
@@ -76,6 +78,7 @@ $body = @{
   hwnd          = "$hwnd"
   surface       = $surface
   orca_terminal = $orcaTerminal
+  pid           = $claudePid
 } | ConvertTo-Json -Compress
 
 $sent = $false

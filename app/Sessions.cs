@@ -23,6 +23,8 @@ public sealed class SessionInfo
     public string Hwnd { get; internal set; } = "";
     /// <summary>Orca terminal tab handle; empty when the session is not in Orca.</summary>
     public string OrcaTerminal { get; internal set; } = "";
+    /// <summary>Claude's process id (0 = unknown). SessionLiveness watches it to see the session is gone.</summary>
+    public int Pid { get; internal set; }
     public SessionStatus Status { get; internal set; } = SessionStatus.Running;
     public DateTimeOffset StartedAt { get; internal set; }
     public DateTimeOffset LastEventAt { get; internal set; }
@@ -79,6 +81,7 @@ public sealed class SessionRegistry
                 if (!string.IsNullOrWhiteSpace(e.Surface)) s.Surface = e.Surface;
                 if (!string.IsNullOrWhiteSpace(e.Hwnd)) s.Hwnd = e.Hwnd;
                 if (!string.IsNullOrWhiteSpace(e.OrcaTerminal)) s.OrcaTerminal = e.OrcaTerminal;
+                if (e.Pid >= 1) s.Pid = e.Pid;
                 s.Status = e.Kind switch
                 {
                     NotifyEventKind.Done => SessionStatus.DoneUnseen,
@@ -103,6 +106,25 @@ public sealed class SessionRegistry
             {
                 s.Status = SessionStatus.DoneSeen;
                 changed = true;
+            }
+        }
+        if (changed) Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// The user went to the session (clicked its pet): take back the call for
+    /// attention, but keep the pet. DoneUnseen -> DoneSeen, Asking -> Running;
+    /// Running and DoneSeen stay as they are. Raises Changed only on a change.
+    /// </summary>
+    public void Visit(string id)
+    {
+        bool changed = false;
+        lock (_lock)
+        {
+            if (_sessions.TryGetValue(id, out var s))
+            {
+                if (s.Status == SessionStatus.DoneUnseen) { s.Status = SessionStatus.DoneSeen; changed = true; }
+                else if (s.Status == SessionStatus.Asking) { s.Status = SessionStatus.Running; changed = true; }
             }
         }
         if (changed) Changed?.Invoke();
