@@ -152,7 +152,7 @@ canvas.px { image-rendering: pixelated; display: block; max-width: 100%; }
   </section>
 
   <section aria-labelledby="h-anims">
-    <h2 id="h-anims">アニメーション（8つ）</h2>
+    <h2 id="h-anims">アニメーション（11）</h2>
     <div class="cards" id="cards"></div>
   </section>
 
@@ -579,6 +579,24 @@ const SPR = (() => {
         { ms: 500, p: { hide: true } },
       ] },
   ];
+
+  // 持ち主が選んだ案（2026-11-27）：生まれる＝案1、消える＝案1。アプリへ書き出す
+  const pick = (id, extra) => Object.assign({}, DRAFTS.find(a => a.id === id), { group: undefined }, extra);
+  ANIMS.push(
+    pick('birthA', { id: 'spawn', name: '生まれる', when: 'セッションが始まったとき（案1：光の粒が集まる）' }),
+    pick('byeA', { id: 'vanish', name: '消える', when: 'セッションが終わったとき（案1：手を振って光になる）' }));
+
+  // #11 びっくり：90% を超えた瞬間、飛び上がってから走り出す
+  ANIMS.push({ id: 'startle', name: 'びっくり', when: '使用量が 90% を超えた瞬間。1回跳ねてから「逃げる」へ',
+    note: '目を見開いてかがむ（1）→ 腕を上げて飛び上がる（2〜4、いちばん高い所で 7 ドット、汗が飛ぶ）→ 着地で沈む（5）→ 構える（6）。',
+    frames: [
+      { ms: 120, p: { bob: 2, wide: 1, eyes: 'wide' } },
+      { ms: 70, p: { y: -3, tall: 2, wide: -1, eyes: 'wide', armL: up(1), armR: up(1), sweat: 0 } },
+      { ms: 110, p: { y: -7, eyes: 'wide', armL: up(1), armR: up(1), legs: [1, 2, 2, 1], sweat: 1 } },
+      { ms: 80, p: { y: -4, eyes: 'wide', armL: up(), armR: up(), legs: [1, 1, 1, 1], sweat: 2 } },
+      { ms: 120, p: { bob: 2, wide: 1, eyes: 'wide', sweat: 3 } },
+      { ms: 160, p: { eyes: 'wide', eyeDx: -1, armL: { dy: 1 }, armR: { dy: 1 } } },
+    ] });
 
   const byId = Object.fromEntries([...ANIMS, ...DRAFTS].map(a => [a.id, a]));
   const cache = new Map();
